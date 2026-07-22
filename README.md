@@ -1,36 +1,46 @@
-This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://nextjs.org/docs/app/api-reference/cli/create-next-app).
+# AgriAdvisor
 
-## Getting Started
+Voice-first RAG proof-of-concept for agriculturists. Farmers ask questions about seeds, crop conditions, and agronomy; the app retrieves from an uploaded knowledge bank and answers with citations.
 
-First, run the development server:
+**Phase 1 (live):** text-only Q&A against a docx knowledge base, single tenant.
+
+## Stack
+
+- Next.js 16 (App Router, TypeScript) + Tailwind CSS
+- Voyage AI (`voyage-3`) for embeddings
+- Supabase Postgres + pgvector for the vector store
+- Anthropic Claude (`claude-sonnet-5`) for grounded answer generation
+- `mammoth` for docx parsing
+
+## Local development
 
 ```bash
+npm install
 npm run dev
-# or
-yarn dev
-# or
-pnpm dev
-# or
-bun dev
 ```
 
-Open [http://localhost:3000](http://localhost:3000) with your browser to see the result.
+Requires a `.env.local` with:
 
-You can start editing the page by modifying `app/page.tsx`. The page auto-updates as you edit the file.
+```
+ANTHROPIC_API_KEY=
+VOYAGE_API_KEY=
+SUPABASE_DB_URL=
+DEFAULT_TENANT_ID=default
+```
 
-This project uses [`next/font`](https://nextjs.org/docs/app/building-your-application/optimizing/fonts) to automatically optimize and load [Geist](https://vercel.com/font), a new font family for Vercel.
+Run `node scripts/migrate.mjs` once to create the `chunks` table and enable pgvector on a fresh Supabase database.
 
-## Learn More
+## Deployment
 
-To learn more about Next.js, take a look at the following resources:
+Deployed on Vercel, connected to this repo for auto-deploy on push to `main`. Environment variables are set directly on the Vercel project (never committed).
 
-- [Next.js Documentation](https://nextjs.org/docs) - learn about Next.js features and API.
-- [Learn Next.js](https://nextjs.org/learn) - an interactive Next.js tutorial.
+## Roadmap
 
-You can check out [the Next.js GitHub repository](https://github.com/vercel/next.js) - your feedback and contributions are welcome!
-
-## Deploy on Vercel
-
-The easiest way to deploy your Next.js app is to use the [Vercel Platform](https://vercel.com/new?utm_medium=default-template&filter=next.js&utm_source=create-next-app&utm_campaign=create-next-app-readme) from the creators of Next.js.
-
-Check out our [Next.js deployment documentation](https://nextjs.org/docs/app/building-your-application/deploying) for more details.
+| Phase | Scope |
+|---|---|
+| 1 | Core RAG, text only, single tenant *(live)* |
+| 2 | Classification (2×2 source × criticality matrix) + confidence labeling |
+| 3 | Per-tenant configuration layer + `/admin` view |
+| 4 | Full connector layer: xlsx, website ingestion, image captioning |
+| 5 | Voice I/O via Sarvam AI (Saaras v3 STT, Bulbul v3 TTS), EN/TA/ML |
+| 6 | Deploy polish, mobile responsiveness |
