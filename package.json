@@ -10,6 +10,7 @@
   },
   "dependencies": {
     "@anthropic-ai/sdk": "^0.112.4",
+    "@breezystack/lamejs": "^1.2.7",
     "dotenv": "^17.4.2",
     "mammoth": "^1.12.0",
     "next": "16.2.10",

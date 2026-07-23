@@ -1,3 +1,5 @@
+import lamejs from "@breezystack/lamejs";
+
 const SARVAM_STT_URL = "https://api.sarvam.ai/speech-to-text";
 const SARVAM_TRANSLATE_URL = "https://api.sarvam.ai/translate";
 const SARVAM_TTS_URL = "https://api.sarvam.ai/text-to-speech";
@@ -85,7 +87,64 @@ export interface SpeechResult {
   contentType: string;
 }
 
-/** Text-to-speech via Bulbul v3. Returns base64-encoded MP3 audio. */
+interface ParsedWav {
+  numChannels: number;
+  sampleRate: number;
+  samples: Int16Array;
+}
+
+/** Minimal PCM WAV parser - walks chunks rather than assuming a fixed 44-byte
+ * header, since some encoders insert extra chunks before "data". */
+function parseWav(buf: Buffer): ParsedWav {
+  const numChannels = buf.readUInt16LE(22);
+  const sampleRate = buf.readUInt32LE(24);
+
+  let offset = 12;
+  let dataOffset = -1;
+  let dataSize = 0;
+  while (offset < buf.length - 8) {
+    const chunkId = buf.toString("ascii", offset, offset + 4);
+    const chunkSize = buf.readUInt32LE(offset + 4);
+    if (chunkId === "data") {
+      dataOffset = offset + 8;
+      dataSize = chunkSize;
+      break;
+    }
+    offset += 8 + chunkSize + (chunkSize % 2);
+  }
+  if (dataOffset === -1) throw new Error("Could not find data chunk in WAV audio");
+
+  const pcmBuf = buf.subarray(dataOffset, dataOffset + dataSize);
+  const samples = new Int16Array(
+    pcmBuf.buffer,
+    pcmBuf.byteOffset,
+    Math.floor(pcmBuf.length / 2)
+  );
+  return { numChannels, sampleRate, samples };
+}
+
+function wavToMp3(wavBuffer: Buffer): Buffer {
+  const { numChannels, sampleRate, samples } = parseWav(wavBuffer);
+  const encoder = new lamejs.Mp3Encoder(numChannels, sampleRate, 128);
+  const blockSize = 1152;
+  const chunks: Buffer[] = [];
+
+  for (let i = 0; i < samples.length; i += blockSize) {
+    const chunk = samples.subarray(i, i + blockSize);
+    const mp3buf =
+      numChannels === 1 ? encoder.encodeBuffer(chunk) : encoder.encodeBuffer(chunk, chunk);
+    if (mp3buf.length > 0) chunks.push(Buffer.from(mp3buf));
+  }
+  const end = encoder.flush();
+  if (end.length > 0) chunks.push(Buffer.from(end));
+
+  return Buffer.concat(chunks);
+}
+
+/** Text-to-speech via Bulbul v3. Sarvam currently always returns WAV
+ * regardless of the requested audio_format, and WAV isn't an accepted
+ * WhatsApp media type (Twilio rejects it with error 63021), so the WAV is
+ * transcoded to MP3 here before being handed off. */
 export async function textToSpeech(
   text: string,
   targetLanguageCode: string
@@ -101,7 +160,6 @@ export async function textToSpeech(
       target_language_code: targetLanguageCode,
       speaker: "priya",
       model: "bulbul:v3",
-      audio_format: "mp3",
     }),
   });
   if (!res.ok) {
@@ -109,7 +167,11 @@ export async function textToSpeech(
     throw new Error(`Sarvam text-to-speech request failed (${res.status}): ${body}`);
   }
   const data = await res.json();
-  const audioBase64 = data.audios?.[0];
-  if (!audioBase64) throw new Error("Sarvam text-to-speech returned no audio");
-  return { audioBase64, contentType: "audio/mpeg" };
+  const wavBase64 = data.audios?.[0];
+  if (!wavBase64) throw new Error("Sarvam text-to-speech returned no audio");
+
+  const wavBuffer = Buffer.from(wavBase64, "base64");
+  const mp3Buffer = wavToMp3(wavBuffer);
+
+  return { audioBase64: mp3Buffer.toString("base64"), contentType: "audio/mpeg" };
 }
