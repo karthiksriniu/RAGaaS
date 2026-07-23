@@ -2,6 +2,10 @@
 
 import { useEffect, useRef, useState } from "react";
 
+const PHONE_STORAGE_KEY = "agriadvisor_farmer_phone";
+const ESCALATION_COUNTDOWN_SECONDS = 10;
+const E164 = /^\+[1-9]\d{7,14}$/;
+
 interface Citation {
   index: number;
   source_uri: string;
@@ -51,20 +55,81 @@ function ConfidenceBadge({ label }: { label: string }) {
   );
 }
 
-function EscalationCard({ question }: { question: string }) {
+function PhoneBanner({ onSave }: { onSave: (phone: string) => void }) {
   const [phone, setPhone] = useState("");
-  const [status, setStatus] = useState<"idle" | "submitting" | "success" | "error">("idle");
+  const [dismissed, setDismissed] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
-  async function handleConnect(e: React.FormEvent) {
+  if (dismissed) return null;
+
+  function handleSave(e: React.FormEvent) {
     e.preventDefault();
+    const trimmed = phone.trim();
+    if (!E164.test(trimmed)) {
+      setError("Use international format, e.g. +919876543210");
+      return;
+    }
+    onSave(trimmed);
+  }
+
+  return (
+    <div className="mx-auto mb-4 max-w-2xl rounded-xl border border-green-200 bg-green-50 p-3">
+      <p className="text-sm font-medium text-green-900">
+        Save your phone number so we can connect you to a live expert instantly if something urgent comes up.
+      </p>
+      <form onSubmit={handleSave} className="mt-2 flex flex-col gap-2 sm:flex-row">
+        <input
+          value={phone}
+          onChange={(e) => setPhone(e.target.value)}
+          placeholder="+91 98765 43210"
+          className="flex-1 rounded-lg border border-green-300 bg-white px-3 py-2 text-sm outline-none focus:border-green-500"
+        />
+        <div className="flex gap-2">
+          <button
+            type="submit"
+            className="whitespace-nowrap rounded-lg bg-green-700 px-4 py-2 text-sm font-medium text-white"
+          >
+            Save
+          </button>
+          <button
+            type="button"
+            onClick={() => setDismissed(true)}
+            className="whitespace-nowrap rounded-lg px-3 py-2 text-sm text-green-800"
+          >
+            Not now
+          </button>
+        </div>
+      </form>
+      {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
+    </div>
+  );
+}
+
+function EscalationCard({
+  question,
+  farmerPhone,
+}: {
+  question: string;
+  farmerPhone: string | null;
+}) {
+  const [phoneInput, setPhoneInput] = useState(farmerPhone || "");
+  const [status, setStatus] = useState<"idle" | "submitting" | "success" | "error" | "skipped">(
+    "idle"
+  );
+  const [error, setError] = useState<string | null>(null);
+  const [countdown, setCountdown] = useState(farmerPhone ? ESCALATION_COUNTDOWN_SECONDS : null);
+  const firedRef = useRef(false);
+
+  async function placeCall(phone: string) {
+    if (firedRef.current) return;
+    firedRef.current = true;
     setStatus("submitting");
     setError(null);
     try {
       const res = await fetch("/api/escalate", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ question, farmerPhone: phone.trim() }),
+        body: JSON.stringify({ question, farmerPhone: phone }),
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Could not place the call");
@@ -72,7 +137,35 @@ function EscalationCard({ question }: { question: string }) {
     } catch (err) {
       setStatus("error");
       setError(err instanceof Error ? err.message : String(err));
+      firedRef.current = false;
     }
+  }
+
+  // Auto-countdown when we already have a saved number.
+  useEffect(() => {
+    if (countdown === null || status !== "idle") return;
+    if (countdown <= 0) {
+      placeCall(farmerPhone as string);
+      return;
+    }
+    const t = setTimeout(() => setCountdown((c) => (c !== null ? c - 1 : c)), 1000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [countdown, status]);
+
+  function handleSkip() {
+    setCountdown(null);
+    setStatus("skipped");
+  }
+
+  async function handleManualConnect(e: React.FormEvent) {
+    e.preventDefault();
+    const trimmed = phoneInput.trim();
+    if (!E164.test(trimmed)) {
+      setError("Use international format, e.g. +919876543210");
+      return;
+    }
+    await placeCall(trimmed);
   }
 
   return (
@@ -80,32 +173,55 @@ function EscalationCard({ question }: { question: string }) {
       <p className="text-sm font-medium text-amber-900">
         This needs expert confirmation before you act.
       </p>
-      {status === "success" ? (
+
+      {status === "success" && (
         <p className="mt-2 text-sm text-amber-800">
           Connecting you now — your phone will ring shortly.
         </p>
-      ) : (
-        <form onSubmit={handleConnect} className="mt-2 flex flex-col gap-2 sm:flex-row">
+      )}
+
+      {status === "idle" && countdown !== null && (
+        <div className="mt-2 flex items-center justify-between gap-3 rounded-lg bg-amber-100 px-3 py-2">
+          <span className="text-sm text-amber-900">
+            Connecting you to an agronomy expert in <span className="font-semibold">{countdown}s</span>…
+          </span>
+          <button
+            onClick={handleSkip}
+            className="whitespace-nowrap rounded-lg border border-amber-400 px-3 py-1.5 text-sm font-medium text-amber-800"
+          >
+            Skip
+          </button>
+        </div>
+      )}
+
+      {status === "submitting" && (
+        <p className="mt-2 text-sm text-amber-800">Connecting you now…</p>
+      )}
+
+      {(status === "skipped" || (status === "idle" && countdown === null)) && (
+        <form onSubmit={handleManualConnect} className="mt-2 flex flex-col gap-2 sm:flex-row">
           <input
-            value={phone}
-            onChange={(e) => setPhone(e.target.value)}
+            value={phoneInput}
+            onChange={(e) => setPhoneInput(e.target.value)}
             placeholder="+91 98765 43210"
             className="flex-1 rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm outline-none focus:border-amber-500"
-            disabled={status === "submitting"}
           />
           <button
             type="submit"
-            disabled={status === "submitting" || !phone.trim()}
+            disabled={!phoneInput.trim()}
             className="whitespace-nowrap rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
           >
-            {status === "submitting" ? "Connecting…" : "Connect me now"}
+            Talk to an expert now
           </button>
         </form>
       )}
+
       {status === "error" && <p className="mt-2 text-xs text-red-600">{error}</p>}
-      <p className="mt-2 text-xs text-amber-700">
-        Use international format, e.g. +91 for India. We&apos;ll call this number and connect you with an agronomy expert live.
-      </p>
+      {(status === "skipped" || (status === "idle" && countdown === null)) && (
+        <p className="mt-2 text-xs text-amber-700">
+          Use international format, e.g. +91 for India. We&apos;ll call this number and connect you with an agronomy expert live.
+        </p>
+      )}
     </div>
   );
 }
@@ -118,6 +234,8 @@ export default function Home() {
   const [sources, setSources] = useState<SourceRow[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
+  const [farmerPhone, setFarmerPhone] = useState<string | null>(null);
+  const [phoneLoaded, setPhoneLoaded] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -129,11 +247,18 @@ export default function Home() {
 
   useEffect(() => {
     refreshSources();
+    setFarmerPhone(localStorage.getItem(PHONE_STORAGE_KEY));
+    setPhoneLoaded(true);
   }, []);
 
   useEffect(() => {
     scrollRef.current?.scrollTo({ top: scrollRef.current.scrollHeight, behavior: "smooth" });
   }, [messages]);
+
+  function handleSavePhone(phone: string) {
+    localStorage.setItem(PHONE_STORAGE_KEY, phone);
+    setFarmerPhone(phone);
+  }
 
   async function handleAsk(e: React.FormEvent) {
     e.preventDefault();
@@ -217,6 +342,8 @@ export default function Home() {
       </header>
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4">
+        {phoneLoaded && !farmerPhone && <PhoneBanner onSave={handleSavePhone} />}
+
         {messages.length === 0 && (
           <div className="mx-auto max-w-md pt-12 text-center text-neutral-500">
             <p className="text-base">
@@ -256,7 +383,9 @@ export default function Home() {
                   ))}
                 </div>
               )}
-              {m.escalation?.show && m.question && <EscalationCard question={m.question} />}
+              {m.escalation?.show && m.question && (
+                <EscalationCard question={m.question} farmerPhone={farmerPhone} />
+              )}
             </div>
           ))}
           {asking && (
@@ -338,6 +467,12 @@ export default function Home() {
               </ul>
             </div>
           </div>
+        </div>
+      )}
+
+      {farmerPhone && (
+        <div className="border-t border-neutral-200 bg-neutral-50 px-4 py-1.5 text-center text-xs text-neutral-400">
+          Expert callback number on file: {farmerPhone}
         </div>
       )}
     </div>
