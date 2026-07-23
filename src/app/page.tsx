@@ -6,6 +6,8 @@ const PHONE_STORAGE_KEY = "agriadvisor_farmer_phone";
 const ESCALATION_COUNTDOWN_SECONDS = 10;
 const E164 = /^\+[1-9]\d{7,14}$/;
 const MAX_RECORDING_SECONDS = 28; // Sarvam caps requests at 30s
+const SILENCE_MS = 3000; // auto-stop after this much continuous silence once speech has started
+const SILENCE_AMPLITUDE_THRESHOLD = 6; // avg deviation from center (0-128 scale) below which audio counts as silence
 
 interface Citation {
   index: number;
@@ -238,9 +240,11 @@ function pickMimeType(): string {
 }
 
 function VoiceButton({
-  onTranscript,
+  onResult,
+  onRecordingChange,
 }: {
-  onTranscript: (text: string, language: string | null) => void;
+  onResult: (text: string, language: string | null) => void;
+  onRecordingChange: (recording: boolean) => void;
 }) {
   const [state, setState] = useState<VoiceState>("idle");
   const [seconds, setSeconds] = useState(0);
@@ -251,16 +255,54 @@ function VoiceButton({
   const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const autoStopRef = useRef<ReturnType<typeof setTimeout> | null>(null);
 
+  // Silence detection. Uses setInterval rather than requestAnimationFrame,
+  // since rAF is throttled or fully paused in backgrounded/hidden tabs
+  // (screen lock, app switch mid-recording on mobile) - setInterval keeps
+  // firing so auto-stop still works if the farmer isn't looking at the page.
+  const audioContextRef = useRef<AudioContext | null>(null);
+  const analyserRef = useRef<AnalyserNode | null>(null);
+  const silenceIntervalRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const lastSoundAtRef = useRef<number>(0);
+  const hasSpokenRef = useRef(false);
+
   function cleanupTimers() {
     if (timerRef.current) clearInterval(timerRef.current);
     if (autoStopRef.current) clearTimeout(autoStopRef.current);
+    if (silenceIntervalRef.current) clearInterval(silenceIntervalRef.current);
     timerRef.current = null;
     autoStopRef.current = null;
+    silenceIntervalRef.current = null;
   }
 
   function stopStream() {
     streamRef.current?.getTracks().forEach((t) => t.stop());
     streamRef.current = null;
+    if (audioContextRef.current) {
+      audioContextRef.current.close().catch(() => {});
+      audioContextRef.current = null;
+    }
+    analyserRef.current = null;
+  }
+
+  function checkSilence() {
+    const analyser = analyserRef.current;
+    if (!analyser || mediaRecorderRef.current?.state !== "recording") return;
+
+    const data = new Uint8Array(analyser.fftSize);
+    analyser.getByteTimeDomainData(data);
+    let sum = 0;
+    for (let i = 0; i < data.length; i++) sum += Math.abs(data[i] - 128);
+    const avgDeviation = sum / data.length;
+
+    const now = Date.now();
+    if (avgDeviation > SILENCE_AMPLITUDE_THRESHOLD) {
+      lastSoundAtRef.current = now;
+      hasSpokenRef.current = true;
+    }
+
+    if (hasSpokenRef.current && now - lastSoundAtRef.current >= SILENCE_MS) {
+      stopRecording();
+    }
   }
 
   async function startRecording() {
@@ -279,7 +321,20 @@ function VoiceButton({
       recorder.onstop = handleStopped;
       recorder.start();
 
+      const AudioCtx = window.AudioContext || (window as unknown as { webkitAudioContext: typeof AudioContext }).webkitAudioContext;
+      const audioContext = new AudioCtx();
+      const source = audioContext.createMediaStreamSource(stream);
+      const analyser = audioContext.createAnalyser();
+      analyser.fftSize = 2048;
+      source.connect(analyser);
+      audioContextRef.current = audioContext;
+      analyserRef.current = analyser;
+      hasSpokenRef.current = false;
+      lastSoundAtRef.current = Date.now();
+      silenceIntervalRef.current = setInterval(checkSilence, 200);
+
       setState("recording");
+      onRecordingChange(true);
       setSeconds(0);
       timerRef.current = setInterval(() => setSeconds((s) => s + 1), 1000);
       autoStopRef.current = setTimeout(stopRecording, MAX_RECORDING_SECONDS * 1000);
@@ -295,9 +350,14 @@ function VoiceButton({
       mediaRecorderRef.current.stop();
     }
     stopStream();
+    onRecordingChange(false);
   }
 
   async function handleStopped() {
+    if (chunksRef.current.length === 0) {
+      setState("idle");
+      return;
+    }
     setState("transcribing");
     try {
       const mimeType = mediaRecorderRef.current?.mimeType || "audio/webm";
@@ -308,7 +368,7 @@ function VoiceButton({
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Transcription failed");
       if (!data.transcript) throw new Error("Didn't catch that — try again.");
-      onTranscript(data.transcript, data.language);
+      onResult(data.transcript, data.language);
       setState("idle");
     } catch (err) {
       setError(err instanceof Error ? err.message : String(err));
@@ -381,6 +441,7 @@ export default function Home() {
   const [farmerPhone, setFarmerPhone] = useState<string | null>(null);
   const [phoneLoaded, setPhoneLoaded] = useState(false);
   const [detectedLanguage, setDetectedLanguage] = useState<string | null>(null);
+  const [isRecording, setIsRecording] = useState(false);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -405,14 +466,7 @@ export default function Home() {
     setFarmerPhone(phone);
   }
 
-  function handleVoiceTranscript(text: string, language: string | null) {
-    setQuestion(text);
-    setDetectedLanguage(language);
-  }
-
-  async function handleAsk(e: React.FormEvent) {
-    e.preventDefault();
-    const q = question.trim();
+  async function submitQuestion(q: string) {
     if (!q || asking) return;
 
     setMessages((m) => [...m, { role: "user", text: q }]);
@@ -450,6 +504,16 @@ export default function Home() {
     } finally {
       setAsking(false);
     }
+  }
+
+  function handleAsk(e: React.FormEvent) {
+    e.preventDefault();
+    submitQuestion(question.trim());
+  }
+
+  function handleVoiceResult(text: string, language: string | null) {
+    setDetectedLanguage(language);
+    submitQuestion(text.trim());
   }
 
   async function handleUpload(file: File) {
@@ -553,19 +617,28 @@ export default function Home() {
           </div>
         )}
         <div className="mx-auto flex max-w-2xl items-center gap-2">
-          <VoiceButton onTranscript={handleVoiceTranscript} />
-          <input
-            value={question}
-            onChange={(e) => {
-              setQuestion(e.target.value);
-              if (detectedLanguage) setDetectedLanguage(null);
-            }}
-            placeholder="Ask about a crop, pest, or disease…"
-            className="flex-1 rounded-full border border-neutral-300 px-4 py-2.5 text-[15px] outline-none focus:border-green-600"
-          />
+          <VoiceButton onResult={handleVoiceResult} onRecordingChange={setIsRecording} />
+          <div className="relative flex-1">
+            <input
+              value={question}
+              onChange={(e) => {
+                setQuestion(e.target.value);
+                if (detectedLanguage) setDetectedLanguage(null);
+              }}
+              disabled={isRecording}
+              placeholder={isRecording ? "" : "Ask about a crop, pest, or disease…"}
+              className="w-full rounded-full border border-neutral-300 px-4 py-2.5 text-[15px] outline-none focus:border-green-600 disabled:bg-neutral-50"
+            />
+            {isRecording && (
+              <span className="pointer-events-none absolute inset-y-0 left-4 flex items-center gap-1.5 text-[15px] text-red-600">
+                <span className="h-2 w-2 animate-pulse rounded-full bg-red-500" />
+                Voice input — listening…
+              </span>
+            )}
+          </div>
           <button
             type="submit"
-            disabled={asking || !question.trim()}
+            disabled={asking || !question.trim() || isRecording}
             className="rounded-full bg-green-700 px-5 py-2.5 text-sm font-medium text-white disabled:opacity-40"
           >
             Ask

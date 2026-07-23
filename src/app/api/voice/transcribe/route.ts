@@ -19,8 +19,15 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "No audio provided" }, { status: 400 });
     }
 
+    // Chrome's MediaRecorder reports "audio/webm;codecs=opus", but Sarvam's
+    // allowed-file-type check only recognizes the bare "audio/webm" - strip
+    // the codec parameter or every real browser recording gets rejected.
+    const cleanType = (audio.type || "audio/webm").split(";")[0].trim();
+    const cleanAudio =
+      audio.type === cleanType ? audio : new Blob([await audio.arrayBuffer()], { type: cleanType });
+
     const sarvamForm = new FormData();
-    sarvamForm.append("file", audio, "recording.webm");
+    sarvamForm.append("file", cleanAudio, "recording.webm");
     sarvamForm.append("model", "saaras:v3");
     sarvamForm.append("mode", "translate"); // always returns English text, regardless of spoken language
 
