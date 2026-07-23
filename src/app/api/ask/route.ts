@@ -29,6 +29,9 @@ export async function POST(req: NextRequest) {
   } catch (err) {
     console.error("/api/ask failed:", err);
     const message = err instanceof Error ? err.message : "Unknown error";
-    return NextResponse.json({ error: message }, { status: 500 });
+    // TEMP DIAGNOSTIC - remove before merging. Stack trace to pin down a
+    // ByteString header error that only reproduces on the Vercel deployment.
+    const stack = err instanceof Error ? err.stack : undefined;
+    return NextResponse.json({ error: message, _debugStack: stack }, { status: 500 });
   }
 }
