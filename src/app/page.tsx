@@ -35,13 +35,6 @@ interface ChatMessage {
   truncated?: boolean;
 }
 
-interface SourceRow {
-  source_uri: string;
-  source_type: string;
-  chunk_count: number;
-  ingested_at: string;
-}
-
 function ConfidenceBadge({ label }: { label: string }) {
   const styles: Record<string, string> = {
     "Confident recommendation": "bg-green-100 text-green-800 border-green-300",
@@ -447,25 +440,13 @@ export default function Home() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [question, setQuestion] = useState("");
   const [asking, setAsking] = useState(false);
-  const [drawerOpen, setDrawerOpen] = useState(false);
-  const [sources, setSources] = useState<SourceRow[]>([]);
-  const [uploading, setUploading] = useState(false);
-  const [uploadError, setUploadError] = useState<string | null>(null);
   const [farmerPhone, setFarmerPhone] = useState<string | null>(null);
   const [phoneLoaded, setPhoneLoaded] = useState(false);
   const [detectedLanguage, setDetectedLanguage] = useState<string | null>(null);
   const [isRecording, setIsRecording] = useState(false);
-  const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
-  async function refreshSources() {
-    const res = await fetch("/api/ingest");
-    const data = await res.json();
-    setSources(data.sources || []);
-  }
-
   useEffect(() => {
-    refreshSources();
     setFarmerPhone(localStorage.getItem(PHONE_STORAGE_KEY));
     setPhoneLoaded(true);
   }, []);
@@ -530,33 +511,6 @@ export default function Home() {
     submitQuestion(text.trim());
   }
 
-  async function handleUpload(file: File) {
-    setUploading(true);
-    setUploadError(null);
-    try {
-      const formData = new FormData();
-      formData.append("file", file);
-      const res = await fetch("/api/ingest", { method: "POST", body: formData });
-      const data = await res.json();
-      if (!res.ok) throw new Error(data.error || "Upload failed");
-      await refreshSources();
-    } catch (err) {
-      setUploadError(err instanceof Error ? err.message : String(err));
-    } finally {
-      setUploading(false);
-      if (fileInputRef.current) fileInputRef.current.value = "";
-    }
-  }
-
-  async function handleDeleteSource(sourceUri: string) {
-    await fetch("/api/ingest", {
-      method: "DELETE",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sourceUri }),
-    });
-    await refreshSources();
-  }
-
   return (
     <div className="flex h-screen flex-col bg-neutral-50 text-neutral-900">
       <header className="flex items-center justify-between border-b border-neutral-200 bg-white px-4 py-3">
@@ -566,12 +520,6 @@ export default function Home() {
             Web demo
           </span>
         </div>
-        <button
-          onClick={() => setDrawerOpen(true)}
-          className="rounded-full border border-neutral-300 px-3 py-1.5 text-sm text-neutral-700"
-        >
-          Knowledge sources
-        </button>
       </header>
 
       <div ref={scrollRef} className="flex-1 overflow-y-auto px-4 py-4">
@@ -672,62 +620,6 @@ export default function Home() {
           </button>
         </div>
       </form>
-
-      {drawerOpen && (
-        <div className="fixed inset-0 z-20 flex">
-          <div className="flex-1 bg-black/30" onClick={() => setDrawerOpen(false)} />
-          <div className="flex w-full max-w-sm flex-col bg-white p-4 shadow-xl">
-            <div className="mb-4 flex items-center justify-between">
-              <h2 className="text-base font-semibold">Knowledge sources</h2>
-              <button onClick={() => setDrawerOpen(false)} className="text-neutral-500">
-                Close
-              </button>
-            </div>
-
-            <label className="mb-2 block text-sm font-medium text-neutral-700">
-              Upload a Word document (.docx)
-            </label>
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".docx"
-              onChange={(e) => {
-                const file = e.target.files?.[0];
-                if (file) handleUpload(file);
-              }}
-              disabled={uploading}
-              className="mb-2 w-full text-sm"
-            />
-            {uploading && <p className="text-sm text-neutral-500">Ingesting document…</p>}
-            {uploadError && <p className="text-sm text-red-600">{uploadError}</p>}
-
-            <div className="mt-4 flex-1 overflow-y-auto">
-              <h3 className="mb-2 text-sm font-medium text-neutral-700">Ingested sources</h3>
-              {sources.length === 0 && (
-                <p className="text-sm text-neutral-400">No sources ingested yet.</p>
-              )}
-              <ul className="flex flex-col gap-2">
-                {sources.map((s) => (
-                  <li
-                    key={s.source_uri}
-                    className="flex items-center justify-between rounded-lg border border-neutral-200 p-2 text-sm"
-                  >
-                    <div>
-                      <p className="font-medium">{s.source_uri}</p>
-                      <p className="text-xs text-neutral-400">
-                        {s.chunk_count} chunks · {s.source_type}
-                      </p>
-                    </div>
-                    <button onClick={() => handleDeleteSource(s.source_uri)} className="text-xs text-red-600">
-                      Delete
-                    </button>
-                  </li>
-                ))}
-              </ul>
-            </div>
-          </div>
-        </div>
-      )}
 
       {farmerPhone && (
         <div className="border-t border-neutral-200 bg-neutral-50 px-4 py-1.5 text-center text-xs text-neutral-400">

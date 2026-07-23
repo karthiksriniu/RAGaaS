@@ -3,6 +3,7 @@ import mammoth from "mammoth";
 import { chunkHtmlByHeadings } from "@/lib/chunk";
 import { embedTexts } from "@/lib/embeddings";
 import { pool } from "@/lib/db";
+import { isAdminSession } from "@/lib/adminAuth";
 
 export const runtime = "nodejs";
 
@@ -11,6 +12,9 @@ function defaultTenant() {
 }
 
 export async function POST(req: NextRequest) {
+  if (!isAdminSession(req)) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   try {
     const formData = await req.formData();
     const file = formData.get("file") as File | null;
@@ -71,13 +75,16 @@ export async function POST(req: NextRequest) {
       chunksIngested: chunks.length,
     });
   } catch (err) {
-    console.error("/api/ingest POST failed:", err);
+    console.error("/api/admin/ingest POST failed:", err);
     const message = err instanceof Error ? err.message : "Unknown error";
     return NextResponse.json({ error: message }, { status: 500 });
   }
 }
 
 export async function GET(req: NextRequest) {
+  if (!isAdminSession(req)) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   const tenantId = req.nextUrl.searchParams.get("tenantId") || defaultTenant();
   const result = await pool.query(
     `SELECT source_uri, source_type, count(*)::int as chunk_count, max(ingested_at) as ingested_at
@@ -91,6 +98,9 @@ export async function GET(req: NextRequest) {
 }
 
 export async function DELETE(req: NextRequest) {
+  if (!isAdminSession(req)) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
   const { sourceUri, tenantId } = await req.json();
   if (!sourceUri) {
     return NextResponse.json({ error: "sourceUri is required" }, { status: 400 });

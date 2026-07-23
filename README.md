@@ -26,13 +26,28 @@ ANTHROPIC_API_KEY=
 VOYAGE_API_KEY=
 SUPABASE_DB_URL=
 DEFAULT_TENANT_ID=default
+ADMIN_PASSWORD_HASH=      # scrypt "salt:hash" hex - generate with a one-off node -e script, never commit the plaintext
+ADMIN_SESSION_SECRET=     # random hex, signs the admin session cookie
 ```
 
 Run `node scripts/migrate.mjs` once to create the `chunks` table and enable pgvector on a fresh Supabase database.
 
+## Admin portal
+
+Knowledge base management (`upload` / `list` / `delete` sources) lives at `/admin`, gated by a single shared admin login (`src/proxy.ts` + `src/lib/adminAuth.ts`) - not yet per-user auth, tracked for a future phase. The farmer-facing routes (`/`, `/api/ask`, `/api/whatsapp/*`, `/api/voice/*`, `/api/escalate`) are deliberately excluded from the gate so Twilio and real users are never blocked.
+
+## Environments
+
+| Environment | Branch | Vercel project | Supabase project | Twilio |
+|---|---|---|---|---|
+| Production | `main` | `agriadvisor-poc` | production project | main account |
+| Staging | `staging` | `agriadvisor-poc-staging` | separate staging project | `AgriAdvisor Staging` subaccount |
+
+Push to `staging` first and run UAT there — it has its own database and its own Twilio subaccount, so nothing touches production data, numbers, or contacts. Only merge `staging` → `main` once UAT passes; `main` auto-deploys straight to production.
+
 ## Deployment
 
-Deployed on Vercel, connected to this repo for auto-deploy on push to `main`. Environment variables are set directly on the Vercel project (never committed).
+Deployed on Vercel, connected to this repo for auto-deploy on push to `main` (production) and `staging` (staging, separate Vercel project). Environment variables are set directly on each Vercel project (never committed).
 
 ## Roadmap
 
