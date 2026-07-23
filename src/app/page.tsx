@@ -15,7 +15,7 @@ interface Citation {
 }
 
 interface Classification {
-  source: "KB_GROUNDED" | "WEAK_MATCH";
+  source: "KB_GROUNDED" | "WEAK_MATCH" | "NO_MATCH";
   criticality: "ROUTINE" | "CRITICAL";
   criticality_score?: number;
   reasoning?: string;

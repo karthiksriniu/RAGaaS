@@ -48,7 +48,7 @@ export async function POST(req: NextRequest) {
           "There's no knowledge base content yet to answer this from. Upload a source document first.",
         citations: [],
         confidence_label: "Insufficient information",
-        classification: { source: "WEAK_MATCH", criticality: criticality.label },
+        classification: { source: "NO_MATCH", criticality: criticality.label },
         escalation: { show: criticality.label === "CRITICAL" },
       });
     }
