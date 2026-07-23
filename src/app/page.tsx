@@ -5,6 +5,7 @@ import { useEffect, useRef, useState } from "react";
 const PHONE_STORAGE_KEY = "agriadvisor_farmer_phone";
 const ESCALATION_COUNTDOWN_SECONDS = 10;
 const E164 = /^\+[1-9]\d{7,14}$/;
+const MAX_RECORDING_SECONDS = 28; // Sarvam caps requests at 30s
 
 interface Citation {
   index: number;
@@ -226,6 +227,149 @@ function EscalationCard({
   );
 }
 
+type VoiceState = "idle" | "recording" | "transcribing" | "error";
+
+function pickMimeType(): string {
+  const candidates = ["audio/webm;codecs=opus", "audio/webm", "audio/mp4"];
+  for (const type of candidates) {
+    if (typeof MediaRecorder !== "undefined" && MediaRecorder.isTypeSupported(type)) return type;
+  }
+  return "";
+}
+
+function VoiceButton({
+  onTranscript,
+}: {
+  onTranscript: (text: string, language: string | null) => void;
+}) {
+  const [state, setState] = useState<VoiceState>("idle");
+  const [seconds, setSeconds] = useState(0);
+  const [error, setError] = useState<string | null>(null);
+  const mediaRecorderRef = useRef<MediaRecorder | null>(null);
+  const chunksRef = useRef<Blob[]>([]);
+  const streamRef = useRef<MediaStream | null>(null);
+  const timerRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const autoStopRef = useRef<ReturnType<typeof setTimeout> | null>(null);
+
+  function cleanupTimers() {
+    if (timerRef.current) clearInterval(timerRef.current);
+    if (autoStopRef.current) clearTimeout(autoStopRef.current);
+    timerRef.current = null;
+    autoStopRef.current = null;
+  }
+
+  function stopStream() {
+    streamRef.current?.getTracks().forEach((t) => t.stop());
+    streamRef.current = null;
+  }
+
+  async function startRecording() {
+    setError(null);
+    try {
+      const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+      streamRef.current = stream;
+      const mimeType = pickMimeType();
+      const recorder = mimeType ? new MediaRecorder(stream, { mimeType }) : new MediaRecorder(stream);
+      mediaRecorderRef.current = recorder;
+      chunksRef.current = [];
+
+      recorder.ondataavailable = (e) => {
+        if (e.data.size > 0) chunksRef.current.push(e.data);
+      };
+      recorder.onstop = handleStopped;
+      recorder.start();
+
+      setState("recording");
+      setSeconds(0);
+      timerRef.current = setInterval(() => setSeconds((s) => s + 1), 1000);
+      autoStopRef.current = setTimeout(stopRecording, MAX_RECORDING_SECONDS * 1000);
+    } catch {
+      setError("Couldn't access the microphone. Check your browser permissions.");
+      setState("error");
+    }
+  }
+
+  function stopRecording() {
+    cleanupTimers();
+    if (mediaRecorderRef.current && mediaRecorderRef.current.state !== "inactive") {
+      mediaRecorderRef.current.stop();
+    }
+    stopStream();
+  }
+
+  async function handleStopped() {
+    setState("transcribing");
+    try {
+      const mimeType = mediaRecorderRef.current?.mimeType || "audio/webm";
+      const blob = new Blob(chunksRef.current, { type: mimeType });
+      const formData = new FormData();
+      formData.append("audio", blob, "recording.webm");
+      const res = await fetch("/api/voice/transcribe", { method: "POST", body: formData });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Transcription failed");
+      if (!data.transcript) throw new Error("Didn't catch that — try again.");
+      onTranscript(data.transcript, data.language);
+      setState("idle");
+    } catch (err) {
+      setError(err instanceof Error ? err.message : String(err));
+      setState("error");
+    }
+  }
+
+  function handleClick() {
+    if (state === "recording") {
+      stopRecording();
+    } else if (state === "idle" || state === "error") {
+      startRecording();
+    }
+  }
+
+  useEffect(() => () => { cleanupTimers(); stopStream(); }, []);
+
+  const mm = String(Math.floor(seconds / 60)).padStart(1, "0");
+  const ss = String(seconds % 60).padStart(2, "0");
+
+  return (
+    <div className="relative flex items-center">
+      <button
+        type="button"
+        onClick={handleClick}
+        disabled={state === "transcribing"}
+        title={state === "recording" ? "Tap to stop" : "Ask by voice"}
+        className={`flex h-10 w-10 items-center justify-center rounded-full border transition-colors ${
+          state === "recording"
+            ? "border-red-400 bg-red-50 text-red-600"
+            : "border-neutral-300 text-neutral-600 hover:bg-neutral-50"
+        } disabled:opacity-40`}
+      >
+        {state === "transcribing" ? (
+          <svg className="h-5 w-5 animate-spin" viewBox="0 0 24 24" fill="none">
+            <circle className="opacity-25" cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="3" />
+            <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
+          </svg>
+        ) : (
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" className="h-5 w-5">
+            <rect x="9" y="3" width="6" height="11" rx="3" />
+            <path d="M5 11a7 7 0 0 0 14 0" />
+            <path d="M12 18v3" />
+            <path d="M9 21h6" />
+          </svg>
+        )}
+      </button>
+      {state === "recording" && (
+        <span className="absolute -top-7 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-red-600 px-2 py-0.5 text-xs text-white">
+          {mm}:{ss}
+        </span>
+      )}
+      {state === "error" && error && (
+        <span className="absolute -top-8 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-lg bg-red-50 px-2 py-1 text-xs text-red-600 shadow">
+          {error}
+        </span>
+      )}
+    </div>
+  );
+}
+
 export default function Home() {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const [question, setQuestion] = useState("");
@@ -236,6 +380,7 @@ export default function Home() {
   const [uploadError, setUploadError] = useState<string | null>(null);
   const [farmerPhone, setFarmerPhone] = useState<string | null>(null);
   const [phoneLoaded, setPhoneLoaded] = useState(false);
+  const [detectedLanguage, setDetectedLanguage] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
 
@@ -258,6 +403,11 @@ export default function Home() {
   function handleSavePhone(phone: string) {
     localStorage.setItem(PHONE_STORAGE_KEY, phone);
     setFarmerPhone(phone);
+  }
+
+  function handleVoiceTranscript(text: string, language: string | null) {
+    setQuestion(text);
+    setDetectedLanguage(language);
   }
 
   async function handleAsk(e: React.FormEvent) {
@@ -397,10 +547,19 @@ export default function Home() {
       </div>
 
       <form onSubmit={handleAsk} className="border-t border-neutral-200 bg-white px-4 py-3">
+        {detectedLanguage && (
+          <div className="mx-auto mb-2 flex max-w-2xl items-center gap-1.5">
+            <span className="text-xs text-neutral-400">Heard in {detectedLanguage} · translated to English</span>
+          </div>
+        )}
         <div className="mx-auto flex max-w-2xl items-center gap-2">
+          <VoiceButton onTranscript={handleVoiceTranscript} />
           <input
             value={question}
-            onChange={(e) => setQuestion(e.target.value)}
+            onChange={(e) => {
+              setQuestion(e.target.value);
+              if (detectedLanguage) setDetectedLanguage(null);
+            }}
             placeholder="Ask about a crop, pest, or disease…"
             className="flex-1 rounded-full border border-neutral-300 px-4 py-2.5 text-[15px] outline-none focus:border-green-600"
           />
