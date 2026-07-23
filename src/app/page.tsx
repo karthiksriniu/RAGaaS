@@ -108,6 +108,8 @@ function PhoneBanner({ onSave }: { onSave: (phone: string) => void }) {
   );
 }
 
+type EscalationPhase = "entering" | "counting" | "skipped" | "submitting" | "success" | "error";
+
 function EscalationCard({
   question,
   farmerPhone,
@@ -115,18 +117,17 @@ function EscalationCard({
   question: string;
   farmerPhone: string | null;
 }) {
+  const initialValid = !!farmerPhone && E164.test(farmerPhone);
   const [phoneInput, setPhoneInput] = useState(farmerPhone || "");
-  const [status, setStatus] = useState<"idle" | "submitting" | "success" | "error" | "skipped">(
-    "idle"
-  );
+  const [phase, setPhase] = useState<EscalationPhase>(initialValid ? "counting" : "entering");
+  const [countdown, setCountdown] = useState(ESCALATION_COUNTDOWN_SECONDS);
   const [error, setError] = useState<string | null>(null);
-  const [countdown, setCountdown] = useState(farmerPhone ? ESCALATION_COUNTDOWN_SECONDS : null);
   const firedRef = useRef(false);
 
   async function placeCall(phone: string) {
     if (firedRef.current) return;
     firedRef.current = true;
-    setStatus("submitting");
+    setPhase("submitting");
     setError(null);
     try {
       const res = await fetch("/api/escalate", {
@@ -136,39 +137,50 @@ function EscalationCard({
       });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Could not place the call");
-      setStatus("success");
+      setPhase("success");
     } catch (err) {
-      setStatus("error");
+      setPhase("error");
       setError(err instanceof Error ? err.message : String(err));
       firedRef.current = false;
     }
   }
 
-  // Auto-countdown when we already have a saved number.
-  useEffect(() => {
-    if (countdown === null || status !== "idle") return;
-    if (countdown <= 0) {
-      placeCall(farmerPhone as string);
-      return;
+  // As soon as a valid number is on hand (saved, or freshly typed), start the
+  // countdown automatically - typing the number is the only step we can't
+  // avoid (browsers can't read a device's own number), everything after that
+  // is auto-triggered.
+  function handlePhoneChange(value: string) {
+    setPhoneInput(value);
+    setError(null);
+    if (phase === "entering" && E164.test(value.trim())) {
+      setCountdown(ESCALATION_COUNTDOWN_SECONDS);
+      setPhase("counting");
     }
-    const t = setTimeout(() => setCountdown((c) => (c !== null ? c - 1 : c)), 1000);
-    return () => clearTimeout(t);
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [countdown, status]);
-
-  function handleSkip() {
-    setCountdown(null);
-    setStatus("skipped");
   }
 
-  async function handleManualConnect(e: React.FormEvent) {
+  useEffect(() => {
+    if (phase !== "counting") return;
+    if (countdown <= 0) {
+      placeCall(phoneInput.trim());
+      return;
+    }
+    const t = setTimeout(() => setCountdown((c) => c - 1), 1000);
+    return () => clearTimeout(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [countdown, phase]);
+
+  function handleSkip() {
+    setPhase("skipped");
+  }
+
+  function handleManualConnect(e: React.FormEvent) {
     e.preventDefault();
     const trimmed = phoneInput.trim();
     if (!E164.test(trimmed)) {
       setError("Use international format, e.g. +919876543210");
       return;
     }
-    await placeCall(trimmed);
+    placeCall(trimmed);
   }
 
   return (
@@ -177,13 +189,13 @@ function EscalationCard({
         This needs expert confirmation before you act.
       </p>
 
-      {status === "success" && (
+      {phase === "success" && (
         <p className="mt-2 text-sm text-amber-800">
           Connecting you now — your phone will ring shortly.
         </p>
       )}
 
-      {status === "idle" && countdown !== null && (
+      {phase === "counting" && (
         <div className="mt-2 flex items-center justify-between gap-3 rounded-lg bg-amber-100 px-3 py-2">
           <span className="text-sm text-amber-900">
             Connecting you to an agronomy expert in <span className="font-semibold">{countdown}s</span>…
@@ -197,15 +209,15 @@ function EscalationCard({
         </div>
       )}
 
-      {status === "submitting" && (
+      {phase === "submitting" && (
         <p className="mt-2 text-sm text-amber-800">Connecting you now…</p>
       )}
 
-      {(status === "skipped" || (status === "idle" && countdown === null)) && (
+      {(phase === "entering" || phase === "skipped") && (
         <form onSubmit={handleManualConnect} className="mt-2 flex flex-col gap-2 sm:flex-row">
           <input
             value={phoneInput}
-            onChange={(e) => setPhoneInput(e.target.value)}
+            onChange={(e) => handlePhoneChange(e.target.value)}
             placeholder="+91 98765 43210"
             className="flex-1 rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm outline-none focus:border-amber-500"
           />
@@ -219,10 +231,10 @@ function EscalationCard({
         </form>
       )}
 
-      {status === "error" && <p className="mt-2 text-xs text-red-600">{error}</p>}
-      {(status === "skipped" || (status === "idle" && countdown === null)) && (
+      {phase === "error" && <p className="mt-2 text-xs text-red-600">{error}</p>}
+      {(phase === "entering" || phase === "skipped") && (
         <p className="mt-2 text-xs text-amber-700">
-          Use international format, e.g. +91 for India. We&apos;ll call this number and connect you with an agronomy expert live.
+          Use international format, e.g. +91 for India — the countdown starts automatically once it&apos;s valid.
         </p>
       )}
     </div>
