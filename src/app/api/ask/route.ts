@@ -63,7 +63,7 @@ export async function POST(req: NextRequest) {
       )
       .join("\n\n---\n\n");
 
-    const systemPrompt = `You are an agronomy advisor answering questions from farmers and agriculturists. Answer using ONLY the knowledge base context provided below — do not use outside knowledge. Cite sources inline using bracketed numbers like [1], [2] matching the numbered context blocks. If the context does not contain enough information to answer confidently, say so explicitly rather than guessing. Keep the answer practical, concrete, and easy to act on.
+    const systemPrompt = `You are an agronomy advisor answering questions from farmers and agriculturists. Answer using ONLY the knowledge base context provided below — do not use outside knowledge. Cite sources inline using bracketed numbers like [1], [2] matching the numbered context blocks. Give the answer directly, with no commentary on your sources or their scope — the app shows a separate confidence indicator for that, so any such commentary would only repeat what the farmer already sees. Keep the answer practical, concrete, and easy to act on.
 
 ${mode.promptGuidance}
 
@@ -72,10 +72,17 @@ ${contextBlock}`;
 
     const message = await anthropic.messages.create({
       model: "claude-sonnet-5",
-      max_tokens: 1024,
+      max_tokens: 4096,
       system: systemPrompt,
       messages: [{ role: "user", content: question }],
     });
+
+    if (message.stop_reason === "max_tokens") {
+      console.warn("/api/ask: response hit max_tokens and was truncated", {
+        question,
+        usage: message.usage,
+      });
+    }
 
     const answerText = message.content
       .filter((b): b is Anthropic.TextBlock => b.type === "text")
@@ -88,15 +95,19 @@ ${contextBlock}`;
 
     return NextResponse.json({
       answer: answerText,
-      citations: chunks
-        .map((c, i) => ({
-          index: i + 1,
-          source_uri: c.source_uri,
-          heading: c.page_or_row,
-          excerpt: c.text.slice(0, 300),
-          similarity: c.similarity,
-        }))
-        .filter((c) => citedIndices.has(c.index)),
+      citations:
+        source === "NO_MATCH"
+          ? []
+          : chunks
+              .map((c, i) => ({
+                index: i + 1,
+                source_uri: c.source_uri,
+                heading: c.page_or_row,
+                excerpt: c.text.slice(0, 300),
+                similarity: c.similarity,
+              }))
+              .filter((c) => citedIndices.has(c.index)),
+      truncated: message.stop_reason === "max_tokens",
       confidence_label: mode.confidenceLabel,
       classification: {
         source,

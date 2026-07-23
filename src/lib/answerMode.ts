@@ -28,6 +28,13 @@ export function classifySource(topSimilarity: number | null): SourceClass {
   return "NO_MATCH";
 }
 
+// Models keep dodging a bare "don't describe the knowledge base" ban by
+// rephrasing around it ("the material here relates to...", "this falls
+// outside what I can guide from..."). Give an exact safe sentence instead
+// of an open-ended prohibition, so there's nothing left to rephrase.
+const NO_LIMITATION_EXPLAINED =
+  'If you lack relevant grounded information for this, say only, once, and nowhere else in the answer: "I don\'t have verified information for your specific situation." Say this exactly once; do not add any other sentence anywhere in the answer — before or after it — about what you know, don\'t know, or have access to, and do not use any phrase describing your sources or their scope (e.g. "the knowledge base", "the material", "the documents", "what I can guide from", "what\'s covered here") — not even indirectly.';
+
 const MODES: Record<SourceClass, Record<Criticality, AnswerMode>> = {
   KB_GROUNDED: {
     ROUTINE: {
@@ -48,15 +55,13 @@ const MODES: Record<SourceClass, Record<Criticality, AnswerMode>> = {
   WEAK_MATCH: {
     ROUTINE: {
       confidenceLabel: "Probable — expert review suggested",
-      promptGuidance:
-        "The knowledge base has some topically related content but no precise match for this question. Give your best general guidance drawing loosely on that context, but explicitly label it as general guidance not specific to the farmer's exact context.",
+      promptGuidance: `Answer directly using the context provided as your best guidance, and note in one short phrase that it's general guidance not specific to the farmer's exact context. ${NO_LIMITATION_EXPLAINED}`,
       showEscalation: false,
       safetyFooter: false,
     },
     CRITICAL: {
       confidenceLabel: "Probable — expert review suggested",
-      promptGuidance:
-        "The knowledge base has some topically related content but no precise match for this critical question. Give your best general guidance but be explicit that it is not verified for the farmer's specific situation, and clearly tell them to confirm with a live agronomy expert before taking action. Do not mention any UI buttons yourself — the app shows a separate way to connect with an expert now.",
+      promptGuidance: `Give your best guidance grounded in the context provided, note briefly that it's not verified for the farmer's specific situation, and clearly tell them to confirm with a live agronomy expert before acting. ${NO_LIMITATION_EXPLAINED} Do not mention any UI buttons yourself — the app shows a separate way to connect with an expert now.`,
       showEscalation: true,
       safetyFooter: false,
     },
@@ -64,15 +69,13 @@ const MODES: Record<SourceClass, Record<Criticality, AnswerMode>> = {
   NO_MATCH: {
     ROUTINE: {
       confidenceLabel: "Insufficient information",
-      promptGuidance:
-        "The knowledge base has no relevant content for this question. Say clearly that this is outside what the knowledge base covers, briefly note what topics it does cover, and do not attempt to answer from general knowledge.",
+      promptGuidance: `${NO_LIMITATION_EXPLAINED} Do not attempt to answer from outside knowledge.`,
       showEscalation: false,
       safetyFooter: false,
     },
     CRITICAL: {
       confidenceLabel: "Insufficient information",
-      promptGuidance:
-        "The knowledge base has no relevant content for this urgent question. Say clearly that this is outside what the knowledge base covers, give only immediate common-sense safety steps if truly obvious (not specific dosing or treatment), and strongly urge contacting a live expert right away. Do not mention any UI buttons yourself — the app shows a separate way to connect with an expert now.",
+      promptGuidance: `${NO_LIMITATION_EXPLAINED} After that sentence, give only obvious, general common-sense safety steps if truly obvious (not specific dosing or treatment), and strongly urge contacting a live expert right away. Do not mention any UI buttons yourself — the app shows a separate way to connect with an expert now.`,
       showEscalation: true,
       safetyFooter: false,
     },

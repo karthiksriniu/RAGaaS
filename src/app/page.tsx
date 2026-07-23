@@ -32,6 +32,7 @@ interface ChatMessage {
   classification?: Classification;
   escalation?: { show: boolean };
   question?: string; // the farmer's question this answer responds to, needed for escalation
+  truncated?: boolean;
 }
 
 interface SourceRow {
@@ -503,6 +504,7 @@ export default function Home() {
           classification: data.classification,
           escalation: data.escalation,
           question: q,
+          truncated: data.truncated,
         },
       ]);
     } catch (err) {
@@ -596,6 +598,11 @@ export default function Home() {
                 </div>
               )}
               <p className="whitespace-pre-wrap text-[15px] leading-relaxed">{m.text}</p>
+              {m.truncated && (
+                <p className="mt-2 text-xs text-amber-600">
+                  This answer may have been cut short — ask again or rephrase for a shorter response.
+                </p>
+              )}
               {m.citations && m.citations.length > 0 && (
                 <div className="mt-3 flex flex-col gap-2 border-t border-neutral-200 pt-2">
                   {m.citations.map((c) => (
