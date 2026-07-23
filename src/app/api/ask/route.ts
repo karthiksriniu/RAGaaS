@@ -2,6 +2,8 @@ import { NextRequest, NextResponse } from "next/server";
 import Anthropic from "@anthropic-ai/sdk";
 import { embedTexts } from "@/lib/embeddings";
 import { pool } from "@/lib/db";
+import { classifyCriticality } from "@/lib/classify";
+import { classifySource, getAnswerMode } from "@/lib/answerMode";
 
 export const runtime = "nodejs";
 
@@ -23,7 +25,10 @@ export async function POST(req: NextRequest) {
     }
     const tenant = tenantId || process.env.DEFAULT_TENANT_ID || "default";
 
-    const [queryEmbedding] = await embedTexts([question], "query");
+    const [[queryEmbedding], criticality] = await Promise.all([
+      embedTexts([question], "query"),
+      classifyCriticality(question),
+    ]);
     const embeddingLiteral = `[${queryEmbedding.join(",")}]`;
 
     const result = await pool.query<ChunkRow>(
@@ -42,8 +47,14 @@ export async function POST(req: NextRequest) {
         answer:
           "There's no knowledge base content yet to answer this from. Upload a source document first.",
         citations: [],
+        confidence_label: "Insufficient information",
+        classification: { source: "WEAK_MATCH", criticality: criticality.label },
+        escalation: { show: criticality.label === "CRITICAL" },
       });
     }
+
+    const source = classifySource(chunks[0].similarity);
+    const mode = getAnswerMode(source, criticality.label);
 
     const contextBlock = chunks
       .map(
@@ -53,6 +64,8 @@ export async function POST(req: NextRequest) {
       .join("\n\n---\n\n");
 
     const systemPrompt = `You are an agronomy advisor answering questions from farmers and agriculturists. Answer using ONLY the knowledge base context provided below — do not use outside knowledge. Cite sources inline using bracketed numbers like [1], [2] matching the numbered context blocks. If the context does not contain enough information to answer confidently, say so explicitly rather than guessing. Keep the answer practical, concrete, and easy to act on.
+
+${mode.promptGuidance}
 
 Knowledge base context:
 ${contextBlock}`;
@@ -84,6 +97,14 @@ ${contextBlock}`;
           similarity: c.similarity,
         }))
         .filter((c) => citedIndices.has(c.index)),
+      confidence_label: mode.confidenceLabel,
+      classification: {
+        source,
+        criticality: criticality.label,
+        criticality_score: criticality.score,
+        reasoning: criticality.reasoning,
+      },
+      escalation: { show: mode.showEscalation },
     });
   } catch (err) {
     console.error("/api/ask failed:", err);

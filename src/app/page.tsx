@@ -10,10 +10,21 @@ interface Citation {
   similarity: number;
 }
 
+interface Classification {
+  source: "KB_GROUNDED" | "WEAK_MATCH";
+  criticality: "ROUTINE" | "CRITICAL";
+  criticality_score?: number;
+  reasoning?: string;
+}
+
 interface ChatMessage {
   role: "user" | "assistant";
   text: string;
   citations?: Citation[];
+  confidenceLabel?: string;
+  classification?: Classification;
+  escalation?: { show: boolean };
+  question?: string; // the farmer's question this answer responds to, needed for escalation
 }
 
 interface SourceRow {
@@ -21,6 +32,82 @@ interface SourceRow {
   source_type: string;
   chunk_count: number;
   ingested_at: string;
+}
+
+function ConfidenceBadge({ label }: { label: string }) {
+  const styles: Record<string, string> = {
+    "Confident recommendation": "bg-green-100 text-green-800 border-green-300",
+    "Probable — expert review suggested": "bg-amber-100 text-amber-800 border-amber-300",
+    "Insufficient information": "bg-neutral-200 text-neutral-600 border-neutral-300",
+  };
+  return (
+    <span
+      className={`mb-2 inline-block rounded-full border px-2.5 py-0.5 text-xs font-medium ${
+        styles[label] || styles["Insufficient information"]
+      }`}
+    >
+      {label}
+    </span>
+  );
+}
+
+function EscalationCard({ question }: { question: string }) {
+  const [phone, setPhone] = useState("");
+  const [status, setStatus] = useState<"idle" | "submitting" | "success" | "error">("idle");
+  const [error, setError] = useState<string | null>(null);
+
+  async function handleConnect(e: React.FormEvent) {
+    e.preventDefault();
+    setStatus("submitting");
+    setError(null);
+    try {
+      const res = await fetch("/api/escalate", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ question, farmerPhone: phone.trim() }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error || "Could not place the call");
+      setStatus("success");
+    } catch (err) {
+      setStatus("error");
+      setError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
+  return (
+    <div className="mt-3 rounded-xl border border-amber-300 bg-amber-50 p-3">
+      <p className="text-sm font-medium text-amber-900">
+        This needs expert confirmation before you act.
+      </p>
+      {status === "success" ? (
+        <p className="mt-2 text-sm text-amber-800">
+          Connecting you now — your phone will ring shortly.
+        </p>
+      ) : (
+        <form onSubmit={handleConnect} className="mt-2 flex flex-col gap-2 sm:flex-row">
+          <input
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            placeholder="+91 98765 43210"
+            className="flex-1 rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm outline-none focus:border-amber-500"
+            disabled={status === "submitting"}
+          />
+          <button
+            type="submit"
+            disabled={status === "submitting" || !phone.trim()}
+            className="whitespace-nowrap rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
+          >
+            {status === "submitting" ? "Connecting…" : "Connect me now"}
+          </button>
+        </form>
+      )}
+      {status === "error" && <p className="mt-2 text-xs text-red-600">{error}</p>}
+      <p className="mt-2 text-xs text-amber-700">
+        Use international format, e.g. +91 for India. We&apos;ll call this number and connect you with an agronomy expert live.
+      </p>
+    </div>
+  );
 }
 
 export default function Home() {
@@ -67,7 +154,15 @@ export default function Home() {
       if (!res.ok) throw new Error(data.error || "Something went wrong");
       setMessages((m) => [
         ...m,
-        { role: "assistant", text: data.answer, citations: data.citations },
+        {
+          role: "assistant",
+          text: data.answer,
+          citations: data.citations,
+          confidenceLabel: data.confidence_label,
+          classification: data.classification,
+          escalation: data.escalation,
+          question: q,
+        },
       ]);
     } catch (err) {
       setMessages((m) => [
@@ -142,6 +237,11 @@ export default function Home() {
                   : "mr-auto max-w-[92%] border border-neutral-200 bg-white"
               }`}
             >
+              {m.role === "assistant" && m.confidenceLabel && (
+                <div>
+                  <ConfidenceBadge label={m.confidenceLabel} />
+                </div>
+              )}
               <p className="whitespace-pre-wrap text-[15px] leading-relaxed">{m.text}</p>
               {m.citations && m.citations.length > 0 && (
                 <div className="mt-3 flex flex-col gap-2 border-t border-neutral-200 pt-2">
@@ -156,6 +256,7 @@ export default function Home() {
                   ))}
                 </div>
               )}
+              {m.escalation?.show && m.question && <EscalationCard question={m.question} />}
             </div>
           ))}
           {asking && (
