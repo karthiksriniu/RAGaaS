@@ -16,3 +16,13 @@ create index if not exists chunks_embedding_idx
   on chunks using hnsw (embedding vector_cosine_ops);
 
 create index if not exists chunks_tenant_idx on chunks (tenant_id);
+
+-- Temporary hosting for generated TTS audio so Twilio can fetch it by URL
+-- for outbound WhatsApp voice-note replies. Rows are short-lived (cleaned up
+-- periodically or left to accumulate for this POC's scale).
+create table if not exists voice_replies (
+  id uuid primary key default gen_random_uuid(),
+  content_type text not null,
+  audio_data bytea not null,
+  created_at timestamptz not null default now()
+);

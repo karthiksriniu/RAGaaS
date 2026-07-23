@@ -560,7 +560,12 @@ export default function Home() {
   return (
     <div className="flex h-screen flex-col bg-neutral-50 text-neutral-900">
       <header className="flex items-center justify-between border-b border-neutral-200 bg-white px-4 py-3">
-        <h1 className="text-lg font-semibold text-green-800">AgriAdvisor</h1>
+        <div className="flex items-center gap-2">
+          <h1 className="text-lg font-semibold text-green-800">AgriAdvisor</h1>
+          <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-xs font-medium text-neutral-500">
+            Web demo
+          </span>
+        </div>
         <button
           onClick={() => setDrawerOpen(true)}
           className="rounded-full border border-neutral-300 px-3 py-1.5 text-sm text-neutral-700"
@@ -579,6 +584,9 @@ export default function Home() {
             </p>
             <p className="mt-2 text-sm">
               Answers are drawn from the uploaded knowledge base.
+            </p>
+            <p className="mt-4 rounded-lg bg-green-50 px-3 py-2 text-xs text-green-800">
+              Farmers should use WhatsApp — send a voice note and get a spoken + written answer back. This page is a secondary demo for testing the pipeline.
             </p>
           </div>
         )}

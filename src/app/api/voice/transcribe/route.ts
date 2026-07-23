@@ -1,14 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
+import { transcribeAudio } from "@/lib/sarvam";
 
 export const runtime = "nodejs";
-
-const SARVAM_URL = "https://api.sarvam.ai/speech-to-text";
-
-const LANGUAGE_LABELS: Record<string, "English" | "Tamil" | "Malayalam"> = {
-  "en-IN": "English",
-  "ta-IN": "Tamil",
-  "ml-IN": "Malayalam",
-};
 
 export async function POST(req: NextRequest) {
   try {
@@ -19,38 +12,9 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: "No audio provided" }, { status: 400 });
     }
 
-    // Chrome's MediaRecorder reports "audio/webm;codecs=opus", but Sarvam's
-    // allowed-file-type check only recognizes the bare "audio/webm" - strip
-    // the codec parameter or every real browser recording gets rejected.
-    const cleanType = (audio.type || "audio/webm").split(";")[0].trim();
-    const cleanAudio =
-      audio.type === cleanType ? audio : new Blob([await audio.arrayBuffer()], { type: cleanType });
+    const { transcript, languageCode, language } = await transcribeAudio(audio);
 
-    const sarvamForm = new FormData();
-    sarvamForm.append("file", cleanAudio, "recording.webm");
-    sarvamForm.append("model", "saaras:v3");
-    sarvamForm.append("mode", "translate"); // always returns English text, regardless of spoken language
-
-    const res = await fetch(SARVAM_URL, {
-      method: "POST",
-      headers: { "api-subscription-key": process.env.SARVAM_API_KEY || "" },
-      body: sarvamForm,
-    });
-
-    if (!res.ok) {
-      const body = await res.text();
-      throw new Error(`Sarvam speech-to-text request failed (${res.status}): ${body}`);
-    }
-
-    const data = await res.json();
-    const languageCode: string | null = data.language_code || null;
-    const language = languageCode ? LANGUAGE_LABELS[languageCode] || languageCode : null;
-
-    return NextResponse.json({
-      transcript: data.transcript || "",
-      languageCode,
-      language,
-    });
+    return NextResponse.json({ transcript, languageCode, language });
   } catch (err) {
     console.error("/api/voice/transcribe failed:", err);
     const message = err instanceof Error ? err.message : "Unknown error";
