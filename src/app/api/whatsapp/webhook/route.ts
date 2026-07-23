@@ -42,14 +42,33 @@ async function storeAudioAndGetUrl(audioBase64: string, contentType: string): Pr
   return `${baseUrl}/api/whatsapp/audio/${id}`;
 }
 
+/** Twilio/WhatsApp can redeliver the same inbound message (retry on a slow
+ * ack, or their own at-least-once delivery). Atomically claim the
+ * MessageSid so a redelivered message is only ever processed once. */
+async function claimMessage(messageSid: string): Promise<boolean> {
+  if (!messageSid) return true; // no SID to dedupe on - process it anyway
+  const result = await pool.query(
+    "INSERT INTO processed_messages (message_sid) VALUES ($1) ON CONFLICT DO NOTHING RETURNING message_sid",
+    [messageSid]
+  );
+  return (result.rowCount ?? 0) > 0;
+}
+
 async function handleIncomingMessage(params: URLSearchParams) {
   const from = params.get("From") || ""; // e.g. "whatsapp:+919876543210"
   const numMedia = parseInt(params.get("NumMedia") || "0", 10);
   const mediaUrl = params.get("MediaUrl0");
   const mediaContentType = params.get("MediaContentType0") || "";
   const textBody = params.get("Body")?.trim();
+  const messageSid = params.get("MessageSid") || params.get("SmsMessageSid") || "";
 
   const twilioNumber = process.env.TWILIO_PHONE_NUMBER_WHATSAPP || "whatsapp:+14155238886";
+
+  const claimed = await claimMessage(messageSid);
+  if (!claimed) {
+    console.warn(`Skipping duplicate delivery of message ${messageSid}`);
+    return;
+  }
 
   try {
     let question: string;

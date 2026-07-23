@@ -26,3 +26,11 @@ create table if not exists voice_replies (
   audio_data bytea not null,
   created_at timestamptz not null default now()
 );
+
+-- Twilio/WhatsApp can deliver the same inbound message more than once
+-- (retry on a slow ack, or their own at-least-once delivery). Claiming the
+-- MessageSid here before running the pipeline makes processing idempotent.
+create table if not exists processed_messages (
+  message_sid text primary key,
+  created_at timestamptz not null default now()
+);
