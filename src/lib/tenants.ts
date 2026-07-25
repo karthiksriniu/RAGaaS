@@ -79,6 +79,20 @@ export async function getTenant(subdomain: string): Promise<Tenant | null> {
   return result.rows.length > 0 ? mapRow(result.rows[0]) : null;
 }
 
+/** Looked up by Twilio's wire-format WhatsApp number (e.g.
+ * "whatsapp:+14155238886", exactly what params.get("To") delivers) - used
+ * by the webhook to route an inbound message to its owning tenant. */
+export async function getTenantByWhatsappNumber(
+  whatsappNumber: string
+): Promise<Tenant | null> {
+  if (!whatsappNumber) return null;
+  const result = await pool.query<TenantRow>(
+    "SELECT * FROM tenants WHERE twilio_whatsapp_number = $1 AND archived_at IS NULL",
+    [whatsappNumber]
+  );
+  return result.rows.length > 0 ? mapRow(result.rows[0]) : null;
+}
+
 export async function listTenants(): Promise<Tenant[]> {
   const result = await pool.query<TenantRow>(
     "SELECT * FROM tenants WHERE archived_at IS NULL ORDER BY name ASC"
@@ -91,12 +105,13 @@ export async function createTenant(input: {
   name: string;
   subdomain: string;
   licenseExpiresAt: string | null;
+  twilioWhatsappNumber?: string | null;
 }): Promise<Tenant> {
   const result = await pool.query<TenantRow>(
-    `INSERT INTO tenants (id, name, subdomain, license_expires_at)
-     VALUES ($1, $2, $3, $4)
+    `INSERT INTO tenants (id, name, subdomain, license_expires_at, twilio_whatsapp_number)
+     VALUES ($1, $2, $3, $4, $5)
      RETURNING *`,
-    [input.id, input.name, input.subdomain, input.licenseExpiresAt]
+    [input.id, input.name, input.subdomain, input.licenseExpiresAt, input.twilioWhatsappNumber ?? null]
   );
   return mapRow(result.rows[0]);
 }
@@ -108,6 +123,18 @@ export async function updateTenantLicense(
   const result = await pool.query<TenantRow>(
     `UPDATE tenants SET license_expires_at = $2 WHERE id = $1 AND archived_at IS NULL RETURNING *`,
     [id, licenseExpiresAt]
+  );
+  if (result.rows.length === 0) throw new TenantNotFoundError(id);
+  return mapRow(result.rows[0]);
+}
+
+export async function updateTenantWhatsappNumber(
+  id: string,
+  twilioWhatsappNumber: string | null
+): Promise<Tenant> {
+  const result = await pool.query<TenantRow>(
+    `UPDATE tenants SET twilio_whatsapp_number = $2 WHERE id = $1 AND archived_at IS NULL RETURNING *`,
+    [id, twilioWhatsappNumber]
   );
   if (result.rows.length === 0) throw new TenantNotFoundError(id);
   return mapRow(result.rows[0]);

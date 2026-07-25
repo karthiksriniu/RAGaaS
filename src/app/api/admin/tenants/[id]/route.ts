@@ -1,8 +1,14 @@
 import { NextRequest, NextResponse } from "next/server";
 import { isAdminSession } from "@/lib/adminAuth";
-import { updateTenantLicense, TenantNotFoundError } from "@/lib/tenants";
+import {
+  updateTenantLicense,
+  updateTenantWhatsappNumber,
+  TenantNotFoundError,
+} from "@/lib/tenants";
 
 export const runtime = "nodejs";
+
+const E164 = /^\+[1-9]\d{7,14}$/;
 
 export async function PATCH(
   req: NextRequest,
@@ -14,20 +20,45 @@ export async function PATCH(
   const { id } = await params;
 
   try {
-    const { licenseExpiresAt } = await req.json();
-    if (
-      licenseExpiresAt !== null &&
-      licenseExpiresAt !== undefined &&
-      isNaN(Date.parse(licenseExpiresAt))
-    ) {
-      return NextResponse.json({ error: "licenseExpiresAt must be a valid date" }, { status: 400 });
+    const { licenseExpiresAt, whatsappNumber } = await req.json();
+
+    if (licenseExpiresAt === undefined && whatsappNumber === undefined) {
+      return NextResponse.json(
+        { error: "licenseExpiresAt or whatsappNumber is required" },
+        { status: 400 }
+      );
     }
 
-    const tenant = await updateTenantLicense(id, licenseExpiresAt ?? null);
+    let tenant;
+    if (licenseExpiresAt !== undefined) {
+      if (licenseExpiresAt !== null && isNaN(Date.parse(licenseExpiresAt))) {
+        return NextResponse.json({ error: "licenseExpiresAt must be a valid date" }, { status: 400 });
+      }
+      tenant = await updateTenantLicense(id, licenseExpiresAt);
+    }
+
+    if (whatsappNumber !== undefined) {
+      if (whatsappNumber !== null && !E164.test(String(whatsappNumber).trim())) {
+        return NextResponse.json(
+          { error: "whatsappNumber must be in international format, e.g. +14155238886" },
+          { status: 400 }
+        );
+      }
+      const normalized = whatsappNumber ? `whatsapp:${String(whatsappNumber).trim()}` : null;
+      tenant = await updateTenantWhatsappNumber(id, normalized);
+    }
+
     return NextResponse.json({ tenant });
   } catch (err) {
     if (err instanceof TenantNotFoundError) {
       return NextResponse.json({ error: err.message }, { status: 404 });
+    }
+    const pgErr = err as { code?: string; constraint?: string };
+    if (pgErr.code === "23505") {
+      return NextResponse.json(
+        { error: "That WhatsApp number is already assigned to another tenant" },
+        { status: 409 }
+      );
     }
     console.error("/api/admin/tenants/[id] PATCH failed:", err);
     const message = err instanceof Error ? err.message : "Unknown error";

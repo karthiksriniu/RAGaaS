@@ -9,6 +9,7 @@ export const runtime = "nodejs";
 // environment's own wildcard.
 const RESERVED_SUBDOMAINS = new Set(["www", "admin", "api", "staging"]);
 const SUBDOMAIN_PATTERN = /^[a-z0-9-]{1,63}$/;
+const E164 = /^\+[1-9]\d{7,14}$/;
 
 function slugify(input: string): string {
   return input
@@ -32,7 +33,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   try {
-    const { name, subdomain, licenseExpiresAt } = await req.json();
+    const { name, subdomain, licenseExpiresAt, whatsappNumber } = await req.json();
 
     if (!name || typeof name !== "string" || !name.trim()) {
       return NextResponse.json({ error: "name is required" }, { status: 400 });
@@ -58,12 +59,19 @@ export async function POST(req: NextRequest) {
     ) {
       return NextResponse.json({ error: "licenseExpiresAt must be a valid date" }, { status: 400 });
     }
+    if (whatsappNumber && (typeof whatsappNumber !== "string" || !E164.test(whatsappNumber.trim()))) {
+      return NextResponse.json(
+        { error: "whatsappNumber must be in international format, e.g. +14155238886" },
+        { status: 400 }
+      );
+    }
 
     const tenant = await createTenant({
       id: slug,
       name: name.trim(),
       subdomain: slug,
       licenseExpiresAt: licenseExpiresAt || null,
+      twilioWhatsappNumber: whatsappNumber ? `whatsapp:${whatsappNumber.trim()}` : null,
     });
 
     const rootDomain = process.env.TENANT_ROOT_DOMAIN;
@@ -71,9 +79,12 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({ tenant, url }, { status: 201 });
   } catch (err) {
-    const pgErr = err as { code?: string };
+    const pgErr = err as { code?: string; constraint?: string };
     if (pgErr.code === "23505") {
-      return NextResponse.json({ error: "That subdomain is already in use" }, { status: 409 });
+      const message = pgErr.constraint?.includes("whatsapp")
+        ? "That WhatsApp number is already assigned to another tenant"
+        : "That subdomain is already in use";
+      return NextResponse.json({ error: message }, { status: 409 });
     }
     console.error("/api/admin/tenants POST failed:", err);
     const message = err instanceof Error ? err.message : "Unknown error";

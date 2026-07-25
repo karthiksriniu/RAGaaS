@@ -4,7 +4,7 @@ import twilio from "twilio";
 import { pool } from "@/lib/db";
 import { transcribeAudio, translateText, textToSpeech } from "@/lib/sarvam";
 import { answerQuestion } from "@/lib/answerQuestion";
-import { assertTenantLicensed } from "@/lib/tenants";
+import { getTenantByWhatsappNumber } from "@/lib/tenants";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -51,9 +51,9 @@ function splitForWhatsApp(text: string): string[] {
   return chunks.map((c, i) => (chunks.length > 1 ? `(${i + 1}/${chunks.length}) ${c}` : c));
 }
 
-async function sendWhatsAppText(twilioNumber: string, to: string, text: string) {
+async function sendWhatsAppText(from: string, to: string, text: string) {
   for (const chunk of splitForWhatsApp(text)) {
-    await twilioClient.messages.create({ from: twilioNumber, to, body: chunk });
+    await twilioClient.messages.create({ from, to, body: chunk });
   }
 }
 
@@ -97,14 +97,13 @@ async function claimMessage(messageSid: string): Promise<boolean> {
 }
 
 async function handleIncomingMessage(params: URLSearchParams) {
-  const from = params.get("From") || ""; // e.g. "whatsapp:+919876543210"
+  const from = params.get("From") || ""; // the farmer, e.g. "whatsapp:+919876543210"
+  const to = params.get("To") || ""; // the number the message arrived at - identifies the tenant
   const numMedia = parseInt(params.get("NumMedia") || "0", 10);
   const mediaUrl = params.get("MediaUrl0");
   const mediaContentType = params.get("MediaContentType0") || "";
   const textBody = params.get("Body")?.trim();
   const messageSid = params.get("MessageSid") || params.get("SmsMessageSid") || "";
-
-  const twilioNumber = process.env.TWILIO_PHONE_NUMBER_WHATSAPP || "whatsapp:+14155238886";
 
   const claimed = await claimMessage(messageSid);
   if (!claimed) {
@@ -113,11 +112,22 @@ async function handleIncomingMessage(params: URLSearchParams) {
   }
 
   try {
-    // Stopgap until Phase 3 routes by the number a message arrives at -
-    // every WhatsApp message is currently answered by one fixed tenant.
-    const tenantId = process.env.WHATSAPP_STOPGAP_TENANT_ID;
-    if (!tenantId) throw new Error("WHATSAPP_STOPGAP_TENANT_ID is not configured");
-    await assertTenantLicensed(tenantId);
+    // Each tenant owns a distinct WhatsApp number; which number a message
+    // arrived at is exactly which tenant it belongs to.
+    const tenant = await getTenantByWhatsappNumber(to);
+    if (!tenant) {
+      await sendWhatsAppText(to, from, "This number isn't set up yet. Please contact the business directly.");
+      return;
+    }
+    if (tenant.licenseExpiresAt && new Date(tenant.licenseExpiresAt) <= new Date()) {
+      await sendWhatsAppText(
+        to,
+        from,
+        "This service is currently unavailable. Please contact the business for details."
+      );
+      return;
+    }
+    const tenantId = tenant.id;
 
     let question: string;
     let farmerLanguageCode = "en-IN";
@@ -129,21 +139,21 @@ async function handleIncomingMessage(params: URLSearchParams) {
       farmerLanguageCode = transcription.languageCode || "en-IN";
 
       if (!question) {
-        await twilioClient.messages.create({
-          from: twilioNumber,
-          to: from,
-          body: "Sorry, I couldn't make out that voice note. Could you try again, speaking clearly?",
-        });
+        await sendWhatsAppText(
+          to,
+          from,
+          "Sorry, I couldn't make out that voice note. Could you try again, speaking clearly?"
+        );
         return;
       }
     } else if (textBody) {
       question = textBody;
     } else {
-      await twilioClient.messages.create({
-        from: twilioNumber,
-        to: from,
-        body: "Send a voice note or a text message with your question about crops, pests, or diseases.",
-      });
+      await sendWhatsAppText(
+        to,
+        from,
+        "Send a voice note or a text message with your question about crops, pests, or diseases."
+      );
       return;
     }
 
@@ -155,7 +165,7 @@ async function handleIncomingMessage(params: URLSearchParams) {
     const audioUrl = await storeAudioAndGetUrl(speech.audioBase64, speech.contentType);
 
     await twilioClient.messages.create({
-      from: twilioNumber,
+      from: to,
       to: from,
       mediaUrl: [audioUrl],
     });
@@ -166,12 +176,12 @@ async function handleIncomingMessage(params: URLSearchParams) {
       detailText += `\n\n⚠️ This needs expert confirmation before you act. Call an agronomist now: ${expertPhone}`;
     }
 
-    await sendWhatsAppText(twilioNumber, from, detailText);
+    await sendWhatsAppText(to, from, detailText);
   } catch (err) {
     console.error("/api/whatsapp/webhook processing failed:", err);
     try {
       await sendWhatsAppText(
-        twilioNumber,
+        to,
         from,
         "Sorry, something went wrong answering that. Please try again in a moment."
       );
