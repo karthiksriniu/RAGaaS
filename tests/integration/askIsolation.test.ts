@@ -1,8 +1,12 @@
-import { describe, it, expect, afterAll } from "vitest";
+import { describe, it, expect, afterAll, beforeEach } from "vitest";
 import { requireEnv } from "./helpers/adminSession";
 import { createTestTenant, cleanupTestTenants } from "./helpers/testTenant";
 
 const baseUrl = () => requireEnv("TEST_BASE_URL");
+
+function wait(ms: number) {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
 
 describe("/api/ask validation", () => {
   it("rejects a missing tenantId with 400", async () => {
@@ -41,6 +45,12 @@ describe("/api/ask license enforcement", () => {
 });
 
 describe("cross-tenant content isolation (real LLM calls - kept to 2 cases)", () => {
+  // Voyage AI's free tier is 3 requests/minute - a short gap before this
+  // file's real calls (and between the two sequential ones below) keeps
+  // the suite reliable without adding retry/backoff to the app just for
+  // test pacing. Same reasoning as ragSmoke.test.ts.
+  beforeEach(() => wait(5000));
+
   it("default and testinsuranceco each only ever cite their own KB", async () => {
     const defaultRes = await fetch(`${baseUrl()}/api/ask`, {
       method: "POST",
@@ -56,6 +66,7 @@ describe("cross-tenant content isolation (real LLM calls - kept to 2 cases)", ()
       expect(citation.source_uri).not.toContain("exotic_fruits");
     }
 
+    await wait(5000);
     const otherRes = await fetch(`${baseUrl()}/api/ask`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
