@@ -1,6 +1,6 @@
 import Anthropic from "@anthropic-ai/sdk";
 import { embedTexts } from "@/lib/embeddings";
-import { pool } from "@/lib/db";
+import { withTenant } from "@/lib/db";
 import { classifyCriticality } from "@/lib/classify";
 import { classifySource, getAnswerMode, SourceClass, Criticality } from "@/lib/answerMode";
 
@@ -58,8 +58,8 @@ const COMPOSE_ANSWER_TOOL: Anthropic.Tool = {
   },
 };
 
-export async function answerQuestion(question: string, tenantId?: string): Promise<AnswerResult> {
-  const tenant = tenantId || process.env.DEFAULT_TENANT_ID || "default";
+export async function answerQuestion(question: string, tenantId: string): Promise<AnswerResult> {
+  if (!tenantId) throw new Error("answerQuestion: tenantId is required");
 
   const [[queryEmbedding], criticality] = await Promise.all([
     embedTexts([question], "query"),
@@ -67,13 +67,15 @@ export async function answerQuestion(question: string, tenantId?: string): Promi
   ]);
   const embeddingLiteral = `[${queryEmbedding.join(",")}]`;
 
-  const result = await pool.query<ChunkRow>(
-    `SELECT text, source_type, source_uri, page_or_row, 1 - (embedding <=> $1) as similarity
-     FROM chunks
-     WHERE tenant_id = $2
-     ORDER BY embedding <=> $1
-     LIMIT 6`,
-    [embeddingLiteral, tenant]
+  const result = await withTenant(tenantId, (client) =>
+    client.query<ChunkRow>(
+      `SELECT text, source_type, source_uri, page_or_row, 1 - (embedding <=> $1) as similarity
+       FROM chunks
+       WHERE tenant_id = $2
+       ORDER BY embedding <=> $1
+       LIMIT 6`,
+      [embeddingLiteral, tenantId]
+    )
   );
 
   const chunks = result.rows;

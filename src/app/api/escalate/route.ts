@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import twilio from "twilio";
+import { assertTenantLicensed, TenantNotFoundError, TenantExpiredError } from "@/lib/tenants";
 
 export const runtime = "nodejs";
 
@@ -7,7 +8,7 @@ const E164 = /^\+[1-9]\d{7,14}$/;
 
 export async function POST(req: NextRequest) {
   try {
-    const { question, farmerPhone } = await req.json();
+    const { question, farmerPhone, tenantId } = await req.json();
 
     if (!farmerPhone || typeof farmerPhone !== "string" || !E164.test(farmerPhone.trim())) {
       return NextResponse.json(
@@ -17,6 +18,18 @@ export async function POST(req: NextRequest) {
     }
     if (!question || typeof question !== "string") {
       return NextResponse.json({ error: "question is required" }, { status: 400 });
+    }
+    if (!tenantId || typeof tenantId !== "string") {
+      return NextResponse.json({ error: "tenantId is required" }, { status: 400 });
+    }
+
+    try {
+      await assertTenantLicensed(tenantId);
+    } catch (err) {
+      if (err instanceof TenantNotFoundError || err instanceof TenantExpiredError) {
+        return NextResponse.json({ error: err.message }, { status: 403 });
+      }
+      throw err;
     }
 
     const baseUrl = process.env.APP_BASE_URL;

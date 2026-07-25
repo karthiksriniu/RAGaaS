@@ -7,7 +7,8 @@ import dotenv from "dotenv";
 const __dirname = dirname(fileURLToPath(import.meta.url));
 dotenv.config({ path: join(__dirname, "..", ".env.local") });
 
-const sql = readFileSync(join(__dirname, "schema.sql"), "utf-8");
+const target = process.argv[2] || "schema.sql";
+const sql = readFileSync(join(__dirname, target), "utf-8");
 
 const client = new Client({
   connectionString: process.env.SUPABASE_DB_URL,
@@ -17,7 +18,7 @@ const client = new Client({
 async function main() {
   await client.connect();
   await client.query(sql);
-  console.log("Migration applied successfully.");
+  console.log(`Migration applied successfully: ${target}`);
   await client.end();
 }
 

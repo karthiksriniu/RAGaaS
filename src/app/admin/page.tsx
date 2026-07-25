@@ -1,6 +1,7 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import Link from "next/link";
 import { useRouter } from "next/navigation";
 
 interface SourceRow {
@@ -10,15 +11,38 @@ interface SourceRow {
   ingested_at: string;
 }
 
+interface TenantOption {
+  id: string;
+  name: string;
+}
+
 export default function AdminHome() {
+  const [tenants, setTenants] = useState<TenantOption[]>([]);
+  const [selectedTenantId, setSelectedTenantId] = useState("");
   const [sources, setSources] = useState<SourceRow[]>([]);
   const [uploading, setUploading] = useState(false);
   const [uploadError, setUploadError] = useState<string | null>(null);
   const fileInputRef = useRef<HTMLInputElement>(null);
   const router = useRouter();
 
-  async function refreshSources() {
-    const res = await fetch("/api/admin/ingest");
+  async function refreshTenants() {
+    const res = await fetch("/api/admin/tenants");
+    if (res.status === 401) {
+      router.push("/admin/login");
+      return;
+    }
+    const data = await res.json();
+    const list: TenantOption[] = data.tenants || [];
+    setTenants(list);
+    setSelectedTenantId((current) => current || list[0]?.id || "");
+  }
+
+  async function refreshSources(tenantId: string) {
+    if (!tenantId) {
+      setSources([]);
+      return;
+    }
+    const res = await fetch(`/api/admin/ingest?tenantId=${encodeURIComponent(tenantId)}`);
     if (res.status === 401) {
       router.push("/admin/login");
       return;
@@ -28,20 +52,27 @@ export default function AdminHome() {
   }
 
   useEffect(() => {
-    refreshSources();
+    refreshTenants();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  useEffect(() => {
+    refreshSources(selectedTenantId);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedTenantId]);
+
   async function handleUpload(file: File) {
+    if (!selectedTenantId) return;
     setUploading(true);
     setUploadError(null);
     try {
       const formData = new FormData();
       formData.append("file", file);
+      formData.append("tenantId", selectedTenantId);
       const res = await fetch("/api/admin/ingest", { method: "POST", body: formData });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Upload failed");
-      await refreshSources();
+      await refreshSources(selectedTenantId);
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : String(err));
     } finally {
@@ -54,9 +85,9 @@ export default function AdminHome() {
     await fetch("/api/admin/ingest", {
       method: "DELETE",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sourceUri }),
+      body: JSON.stringify({ sourceUri, tenantId: selectedTenantId }),
     });
-    await refreshSources();
+    await refreshSources(selectedTenantId);
   }
 
   async function handleLogout() {
@@ -73,12 +104,31 @@ export default function AdminHome() {
             Knowledge sources
           </span>
         </div>
-        <button onClick={handleLogout} className="text-sm text-neutral-500 hover:text-neutral-800">
-          Sign out
-        </button>
+        <div className="flex items-center gap-4">
+          <Link href="/admin/tenants" className="text-sm text-neutral-500 hover:text-neutral-800">
+            Manage tenants
+          </Link>
+          <button onClick={handleLogout} className="text-sm text-neutral-500 hover:text-neutral-800">
+            Sign out
+          </button>
+        </div>
       </header>
 
       <div className="mx-auto max-w-2xl px-6 py-8">
+        <label className="mb-2 block text-sm font-medium text-neutral-700">Tenant</label>
+        <select
+          value={selectedTenantId}
+          onChange={(e) => setSelectedTenantId(e.target.value)}
+          className="mb-6 w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm"
+        >
+          {tenants.length === 0 && <option value="">No tenants yet</option>}
+          {tenants.map((t) => (
+            <option key={t.id} value={t.id}>
+              {t.name}
+            </option>
+          ))}
+        </select>
+
         <label className="mb-2 block text-sm font-medium text-neutral-700">
           Upload a Word document (.docx)
         </label>
@@ -90,7 +140,7 @@ export default function AdminHome() {
             const file = e.target.files?.[0];
             if (file) handleUpload(file);
           }}
-          disabled={uploading}
+          disabled={uploading || !selectedTenantId}
           className="mb-2 w-full text-sm"
         />
         {uploading && <p className="text-sm text-neutral-500">Ingesting document…</p>}

@@ -34,3 +34,19 @@ create table if not exists processed_messages (
   message_sid text primary key,
   created_at timestamptz not null default now()
 );
+
+-- Registry of tenants (clients) for the multi-tenant platform. Not itself
+-- RLS-scoped - it's the registry, gated by admin auth in its route handlers.
+create table if not exists tenants (
+  id text primary key,
+  name text not null,
+  subdomain text not null unique,
+  twilio_whatsapp_number text unique,
+  license_expires_at timestamptz,
+  archived_at timestamptz,
+  created_at timestamptz not null default now()
+);
+
+insert into tenants (id, name, subdomain)
+values ('default', 'Default', 'default')
+on conflict (id) do nothing;

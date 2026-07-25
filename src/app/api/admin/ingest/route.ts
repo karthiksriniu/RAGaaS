@@ -2,14 +2,11 @@ import { NextRequest, NextResponse } from "next/server";
 import mammoth from "mammoth";
 import { chunkHtmlByHeadings } from "@/lib/chunk";
 import { embedTexts } from "@/lib/embeddings";
-import { pool } from "@/lib/db";
+import { withTenant } from "@/lib/db";
 import { isAdminSession } from "@/lib/adminAuth";
+import { assertTenantExists, TenantNotFoundError } from "@/lib/tenants";
 
 export const runtime = "nodejs";
-
-function defaultTenant() {
-  return process.env.DEFAULT_TENANT_ID || "default";
-}
 
 export async function POST(req: NextRequest) {
   if (!isAdminSession(req)) {
@@ -18,7 +15,12 @@ export async function POST(req: NextRequest) {
   try {
     const formData = await req.formData();
     const file = formData.get("file") as File | null;
-    const tenantId = (formData.get("tenantId") as string) || defaultTenant();
+    const tenantId = formData.get("tenantId") as string | null;
+
+    if (!tenantId) {
+      return NextResponse.json({ error: "tenantId is required" }, { status: 400 });
+    }
+    await assertTenantExists(tenantId);
 
     if (!file) {
       return NextResponse.json({ error: "No file provided" }, { status: 400 });
@@ -46,9 +48,7 @@ export async function POST(req: NextRequest) {
       "document"
     );
 
-    const client = await pool.connect();
-    try {
-      await client.query("BEGIN");
+    await withTenant(tenantId, async (client) => {
       await client.query(
         "DELETE FROM chunks WHERE tenant_id = $1 AND source_uri = $2",
         [tenantId, file.name]
@@ -61,13 +61,7 @@ export async function POST(req: NextRequest) {
           [tenantId, chunks[i].text, file.name, chunks[i].heading, embeddingLiteral]
         );
       }
-      await client.query("COMMIT");
-    } catch (err) {
-      await client.query("ROLLBACK");
-      throw err;
-    } finally {
-      client.release();
-    }
+    });
 
     return NextResponse.json({
       ok: true,
@@ -75,6 +69,9 @@ export async function POST(req: NextRequest) {
       chunksIngested: chunks.length,
     });
   } catch (err) {
+    if (err instanceof TenantNotFoundError) {
+      return NextResponse.json({ error: err.message }, { status: 400 });
+    }
     console.error("/api/admin/ingest POST failed:", err);
     const message = err instanceof Error ? err.message : "Unknown error";
     return NextResponse.json({ error: message }, { status: 500 });
@@ -85,16 +82,29 @@ export async function GET(req: NextRequest) {
   if (!isAdminSession(req)) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
-  const tenantId = req.nextUrl.searchParams.get("tenantId") || defaultTenant();
-  const result = await pool.query(
-    `SELECT source_uri, source_type, count(*)::int as chunk_count, max(ingested_at) as ingested_at
-     FROM chunks
-     WHERE tenant_id = $1
-     GROUP BY source_uri, source_type
-     ORDER BY max(ingested_at) DESC`,
-    [tenantId]
-  );
-  return NextResponse.json({ sources: result.rows });
+  const tenantId = req.nextUrl.searchParams.get("tenantId");
+  if (!tenantId) {
+    return NextResponse.json({ error: "tenantId is required" }, { status: 400 });
+  }
+  try {
+    await assertTenantExists(tenantId);
+    const result = await withTenant(tenantId, (client) =>
+      client.query(
+        `SELECT source_uri, source_type, count(*)::int as chunk_count, max(ingested_at) as ingested_at
+         FROM chunks
+         WHERE tenant_id = $1
+         GROUP BY source_uri, source_type
+         ORDER BY max(ingested_at) DESC`,
+        [tenantId]
+      )
+    );
+    return NextResponse.json({ sources: result.rows });
+  } catch (err) {
+    if (err instanceof TenantNotFoundError) {
+      return NextResponse.json({ error: err.message }, { status: 400 });
+    }
+    throw err;
+  }
 }
 
 export async function DELETE(req: NextRequest) {
@@ -105,9 +115,22 @@ export async function DELETE(req: NextRequest) {
   if (!sourceUri) {
     return NextResponse.json({ error: "sourceUri is required" }, { status: 400 });
   }
-  await pool.query("DELETE FROM chunks WHERE tenant_id = $1 AND source_uri = $2", [
-    tenantId || defaultTenant(),
-    sourceUri,
-  ]);
-  return NextResponse.json({ ok: true });
+  if (!tenantId) {
+    return NextResponse.json({ error: "tenantId is required" }, { status: 400 });
+  }
+  try {
+    await assertTenantExists(tenantId);
+    await withTenant(tenantId, (client) =>
+      client.query("DELETE FROM chunks WHERE tenant_id = $1 AND source_uri = $2", [
+        tenantId,
+        sourceUri,
+      ])
+    );
+    return NextResponse.json({ ok: true });
+  } catch (err) {
+    if (err instanceof TenantNotFoundError) {
+      return NextResponse.json({ error: err.message }, { status: 400 });
+    }
+    throw err;
+  }
 }

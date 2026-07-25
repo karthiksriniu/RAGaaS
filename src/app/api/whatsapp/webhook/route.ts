@@ -4,6 +4,7 @@ import twilio from "twilio";
 import { pool } from "@/lib/db";
 import { transcribeAudio, translateText, textToSpeech } from "@/lib/sarvam";
 import { answerQuestion } from "@/lib/answerQuestion";
+import { assertTenantLicensed } from "@/lib/tenants";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
@@ -112,6 +113,12 @@ async function handleIncomingMessage(params: URLSearchParams) {
   }
 
   try {
+    // Stopgap until Phase 3 routes by the number a message arrives at -
+    // every WhatsApp message is currently answered by one fixed tenant.
+    const tenantId = process.env.WHATSAPP_STOPGAP_TENANT_ID;
+    if (!tenantId) throw new Error("WHATSAPP_STOPGAP_TENANT_ID is not configured");
+    await assertTenantLicensed(tenantId);
+
     let question: string;
     let farmerLanguageCode = "en-IN";
 
@@ -140,7 +147,7 @@ async function handleIncomingMessage(params: URLSearchParams) {
       return;
     }
 
-    const result = await answerQuestion(question);
+    const result = await answerQuestion(question, tenantId);
 
     // Translate the short voice summary back to the farmer's spoken language, then synthesize it.
     const translatedSummary = await translateText(result.voiceSummary, farmerLanguageCode);
