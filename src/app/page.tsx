@@ -2,6 +2,12 @@ import { headers } from "next/headers";
 import ChatClient from "./ChatClient";
 import { getTenant } from "@/lib/tenants";
 
+// This page's content depends entirely on the request's Host header (which
+// tenant, or no tenant at all) - it must never be statically cached or
+// served stale across different hosts. headers() alone didn't reliably
+// force that in every deployment; this makes it explicit.
+export const dynamic = "force-dynamic";
+
 function NoTenantLanding() {
   return (
     <div className="flex h-screen items-center justify-center bg-neutral-50 px-4 text-center">
