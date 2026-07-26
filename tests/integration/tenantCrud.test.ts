@@ -15,7 +15,7 @@ describe("tenant CRUD", () => {
     const chatRes = await fetch(`https://${subdomain}.staging.mybizcare.com/`);
     expect(chatRes.status).toBe(200);
     const html = await chatRes.text();
-    expect(html).toContain("AgriAdvisor"); // chat UI rendered, not the no-tenant landing
+    expect(html).toContain("MyBizCare"); // chat UI rendered, not the no-tenant landing
     expect(html).not.toContain("linked to a business"); // the NoTenantLanding copy
   });
 

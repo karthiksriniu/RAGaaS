@@ -3,6 +3,11 @@
 import { useEffect, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { Button } from "@/components/kiowa/Button";
+import { TextField } from "@/components/kiowa/TextField";
+import { Card } from "@/components/kiowa/Card";
+import { StatusPill } from "@/components/kiowa/StatusPill";
+import { Logo } from "@/components/Logo";
 
 interface Tenant {
   id: string;
@@ -135,167 +140,138 @@ export default function AdminTenants() {
   }
 
   return (
-    <div className="min-h-screen bg-neutral-50 text-neutral-900">
-      <header className="flex items-center justify-between border-b border-neutral-200 bg-white px-6 py-4">
-        <div className="flex items-center gap-2">
-          <h1 className="text-lg font-semibold text-green-800">AgriAdvisor admin</h1>
-          <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-xs font-medium text-neutral-500">
-            Tenants
-          </span>
+    <div className="min-h-screen" style={{ background: "var(--color-surface)", color: "var(--color-on-surface)" }}>
+      <header
+        className="flex items-center justify-between px-6 py-4"
+        style={{ borderBottom: "1px solid var(--color-outline-variant)", background: "var(--color-surface-container-lowest)" }}
+      >
+        <div className="flex items-center gap-2.5">
+          <Logo size={28} />
+          <h1 className="kw-title-large" style={{ fontFamily: "var(--font-brand)", fontWeight: "var(--weight-bold)", color: "var(--color-primary)" }}>
+            MyBizCare admin
+          </h1>
+          <StatusPill label="Tenants" tone="neutral" />
         </div>
-        <Link href="/admin" className="text-sm text-neutral-500 hover:text-neutral-800">
-          Knowledge sources
+        <Link href="/admin">
+          <Button type="button" variant="text" icon="description">Knowledge sources</Button>
         </Link>
       </header>
 
       <div className="mx-auto max-w-2xl px-6 py-8">
-        <h2 className="mb-3 text-sm font-medium text-neutral-700">Create a tenant</h2>
-        <form
-          onSubmit={handleCreate}
-          className="mb-8 flex flex-col gap-2 rounded-lg border border-neutral-200 bg-white p-4"
-        >
-          <input
-            value={name}
-            onChange={(e) => setName(e.target.value)}
-            placeholder="Business name"
-            className="rounded-lg border border-neutral-300 px-3 py-2 text-sm"
-          />
-          <input
-            value={subdomain}
-            onChange={(e) => setSubdomain(e.target.value)}
-            placeholder="Subdomain (e.g. hospitalinsuranceco)"
-            className="rounded-lg border border-neutral-300 px-3 py-2 text-sm"
-          />
-          <label className="text-xs text-neutral-500">License expiry (optional, blank = no expiry)</label>
-          <input
-            type="date"
-            value={licenseExpiresAt}
-            onChange={(e) => setLicenseExpiresAt(e.target.value)}
-            className="rounded-lg border border-neutral-300 px-3 py-2 text-sm"
-          />
-          <label className="text-xs text-neutral-500">WhatsApp number (optional, can be added later)</label>
-          <input
-            value={whatsappNumber}
-            onChange={(e) => setWhatsappNumber(e.target.value)}
-            placeholder="+14155238886"
-            className="rounded-lg border border-neutral-300 px-3 py-2 text-sm"
-          />
-          {createError && <p className="text-xs text-red-600">{createError}</p>}
-          <button
-            type="submit"
-            disabled={creating || !name.trim() || !subdomain.trim()}
-            className="mt-1 rounded-lg bg-green-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
-          >
-            {creating ? "Creating…" : "Create tenant"}
-          </button>
-        </form>
+        <h2 className="kw-label-large mb-3" style={{ color: "var(--color-on-surface-variant)" }}>
+          Create a tenant
+        </h2>
+        <Card variant="outlined" padding={20} style={{ marginBottom: 32 }}>
+          <form onSubmit={handleCreate} className="flex flex-col gap-4">
+            <TextField
+              label="Business name"
+              value={name}
+              onChange={(e) => setName(e.target.value)}
+              style={{ width: "100%" }}
+            />
+            <TextField
+              label="Subdomain"
+              placeholder="e.g. hospitalinsuranceco"
+              value={subdomain}
+              onChange={(e) => setSubdomain(e.target.value)}
+              style={{ width: "100%" }}
+            />
+            <TextField
+              label="License expiry (optional, blank = no expiry)"
+              type="date"
+              value={licenseExpiresAt}
+              onChange={(e) => setLicenseExpiresAt(e.target.value)}
+              style={{ width: "100%" }}
+            />
+            <TextField
+              label="WhatsApp number (optional, can be added later)"
+              placeholder="+14155238886"
+              value={whatsappNumber}
+              onChange={(e) => setWhatsappNumber(e.target.value)}
+              style={{ width: "100%" }}
+            />
+            {createError && (
+              <p className="kw-body-small" style={{ color: "var(--color-error)" }}>
+                {createError}
+              </p>
+            )}
+            <Button type="submit" variant="filled" disabled={creating || !name.trim() || !subdomain.trim()}>
+              {creating ? "Creating…" : "Create tenant"}
+            </Button>
+          </form>
+        </Card>
 
-        <h2 className="mb-3 text-sm font-medium text-neutral-700">Tenants</h2>
-        <ul className="flex flex-col gap-2">
+        <h2 className="kw-label-large mb-3" style={{ color: "var(--color-on-surface-variant)" }}>
+          Tenants
+        </h2>
+        <div className="flex flex-col gap-3">
           {tenants.map((t) => {
             const expired = isExpired(t);
             const url = rootDomain ? `https://${t.subdomain}.${rootDomain}` : null;
             return (
-              <li key={t.id} className="rounded-lg border border-neutral-200 bg-white p-3 text-sm">
-                <div className="flex items-center justify-between">
-                  <div>
-                    <span className="font-medium">{t.name}</span>{" "}
-                    <span
-                      className={`ml-1 rounded-full px-2 py-0.5 text-xs font-medium ${
-                        expired
-                          ? "bg-red-100 text-red-700"
-                          : "bg-green-100 text-green-800"
-                      }`}
-                    >
-                      {expired ? "expired" : "active"}
-                    </span>
-                  </div>
+              <Card key={t.id} variant="outlined" padding={16}>
+                <div className="flex items-center gap-2">
+                  <span className="kw-title-small" style={{ color: "var(--color-on-surface)" }}>{t.name}</span>
+                  <StatusPill label={expired ? "expired" : "active"} tone={expired ? "urgent" : "success"} />
                 </div>
                 {url && (
                   <a
                     href={url}
                     target="_blank"
                     rel="noreferrer"
-                    className="text-xs text-neutral-500 hover:underline"
+                    className="kw-body-small mt-1 inline-block hover:underline"
+                    style={{ color: "var(--color-on-surface-variant)" }}
                   >
                     {url}
                   </a>
                 )}
 
                 {editingLicenseId === t.id ? (
-                  <div className="mt-2 flex items-center gap-2">
-                    <input
-                      type="date"
-                      value={editDate}
-                      onChange={(e) => setEditDate(e.target.value)}
-                      className="rounded-lg border border-neutral-300 px-2 py-1 text-xs"
-                    />
-                    <button
-                      onClick={() => saveEditLicense(t.id)}
-                      className="rounded-lg bg-green-700 px-3 py-1 text-xs font-medium text-white"
-                    >
-                      Save
-                    </button>
-                    <button
-                      onClick={() => setEditingLicenseId(null)}
-                      className="text-xs text-neutral-500"
-                    >
-                      Cancel
-                    </button>
+                  <div className="mt-3 flex flex-wrap items-center gap-2">
+                    <TextField type="date" value={editDate} onChange={(e) => setEditDate(e.target.value)} style={{ minWidth: 180 }} />
+                    <Button type="button" variant="filled" size="small" onClick={() => saveEditLicense(t.id)}>Save</Button>
+                    <Button type="button" variant="text" size="small" onClick={() => setEditingLicenseId(null)}>Cancel</Button>
                   </div>
                 ) : (
-                  <div className="mt-2 flex items-center gap-2 text-xs text-neutral-400">
-                    <span>
-                      {t.licenseExpiresAt
-                        ? `Expires ${new Date(t.licenseExpiresAt).toLocaleDateString()}`
-                        : "No expiry"}
+                  <div className="mt-3 flex items-center gap-3">
+                    <span className="kw-body-small" style={{ color: "var(--color-on-surface-variant)" }}>
+                      {t.licenseExpiresAt ? `Expires ${new Date(t.licenseExpiresAt).toLocaleDateString()}` : "No expiry"}
                     </span>
-                    <button onClick={() => startEditLicense(t)} className="text-green-700 hover:underline">
-                      Edit
-                    </button>
+                    <Button type="button" variant="text" size="small" onClick={() => startEditLicense(t)}>Edit</Button>
                   </div>
                 )}
 
                 {editingNumberId === t.id ? (
-                  <div className="mt-2 flex flex-col gap-1">
-                    <div className="flex items-center gap-2">
-                      <input
+                  <div className="mt-2 flex flex-col gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <TextField
+                        placeholder="+14155238886"
                         value={editNumber}
                         onChange={(e) => setEditNumber(e.target.value)}
-                        placeholder="+14155238886"
-                        className="rounded-lg border border-neutral-300 px-2 py-1 text-xs"
+                        error={!!editNumberError}
+                        style={{ minWidth: 200 }}
                       />
-                      <button
-                        onClick={() => saveEditNumber(t.id)}
-                        className="rounded-lg bg-green-700 px-3 py-1 text-xs font-medium text-white"
-                      >
-                        Save
-                      </button>
-                      <button
-                        onClick={() => setEditingNumberId(null)}
-                        className="text-xs text-neutral-500"
-                      >
-                        Cancel
-                      </button>
+                      <Button type="button" variant="filled" size="small" onClick={() => saveEditNumber(t.id)}>Save</Button>
+                      <Button type="button" variant="text" size="small" onClick={() => setEditingNumberId(null)}>Cancel</Button>
                     </div>
-                    {editNumberError && <p className="text-xs text-red-600">{editNumberError}</p>}
+                    {editNumberError && (
+                      <p className="kw-body-small" style={{ color: "var(--color-error)" }}>
+                        {editNumberError}
+                      </p>
+                    )}
                   </div>
                 ) : (
-                  <div className="mt-1 flex items-center gap-2 text-xs text-neutral-400">
-                    <span>
-                      {t.twilioWhatsappNumber
-                        ? `WhatsApp: ${stripWhatsappPrefix(t.twilioWhatsappNumber)}`
-                        : "No WhatsApp number assigned"}
+                  <div className="mt-2 flex items-center gap-3">
+                    <span className="kw-body-small" style={{ color: "var(--color-on-surface-variant)" }}>
+                      {t.twilioWhatsappNumber ? `WhatsApp: ${stripWhatsappPrefix(t.twilioWhatsappNumber)}` : "No WhatsApp number assigned"}
                     </span>
-                    <button onClick={() => startEditNumber(t)} className="text-green-700 hover:underline">
-                      Edit
-                    </button>
+                    <Button type="button" variant="text" size="small" onClick={() => startEditNumber(t)}>Edit</Button>
                   </div>
                 )}
-              </li>
+              </Card>
             );
           })}
-        </ul>
+        </div>
       </div>
     </div>
   );

@@ -2,6 +2,10 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
+import { Button } from "@/components/kiowa/Button";
+import { TextField } from "@/components/kiowa/TextField";
+import { Card } from "@/components/kiowa/Card";
+import { Logo } from "@/components/Logo";
 
 export default function AdminLogin() {
   const [password, setPassword] = useState("");
@@ -30,30 +34,37 @@ export default function AdminLogin() {
   }
 
   return (
-    <div className="flex min-h-screen items-center justify-center bg-neutral-50 px-4">
-      <form
-        onSubmit={handleSubmit}
-        className="w-full max-w-sm rounded-2xl border border-neutral-200 bg-white p-6 shadow-sm"
-      >
-        <h1 className="text-lg font-semibold text-green-800">AgriAdvisor admin</h1>
-        <p className="mt-1 text-sm text-neutral-500">Sign in to manage knowledge sources.</p>
-        <input
-          type="password"
-          autoFocus
-          value={password}
-          onChange={(e) => setPassword(e.target.value)}
-          placeholder="Password"
-          className="mt-4 w-full rounded-lg border border-neutral-300 px-3 py-2 text-sm outline-none focus:border-green-600"
-        />
-        {error && <p className="mt-2 text-xs text-red-600">{error}</p>}
-        <button
-          type="submit"
-          disabled={submitting || !password}
-          className="mt-4 w-full rounded-lg bg-green-700 px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
-        >
-          {submitting ? "Signing in…" : "Sign in"}
-        </button>
-      </form>
+    <div className="flex min-h-screen items-center justify-center px-4" style={{ background: "var(--color-surface)" }}>
+      <Card variant="elevated" padding={32} style={{ width: "100%", maxWidth: 380 }}>
+        <form onSubmit={handleSubmit} className="flex flex-col">
+          <div className="mb-1 flex items-center gap-2.5">
+            <Logo size={28} />
+            <h1 className="kw-title-large" style={{ fontFamily: "var(--font-brand)", fontWeight: "var(--weight-bold)", color: "var(--color-primary)" }}>
+              MyBizCare admin
+            </h1>
+          </div>
+          <p className="kw-body-medium mt-1" style={{ color: "var(--color-on-surface-variant)" }}>
+            Sign in to manage knowledge sources.
+          </p>
+          <TextField
+            type="password"
+            autoFocus
+            label="Password"
+            value={password}
+            onChange={(e) => setPassword(e.target.value)}
+            error={!!error}
+            style={{ marginTop: 20, width: "100%" }}
+          />
+          {error && (
+            <p className="kw-body-small mt-2" style={{ color: "var(--color-error)" }}>
+              {error}
+            </p>
+          )}
+          <Button type="submit" variant="filled" fullWidth disabled={submitting || !password} style={{ marginTop: 20 }}>
+            {submitting ? "Signing in…" : "Sign in"}
+          </Button>
+        </form>
+      </Card>
     </div>
   );
 }
