@@ -48,7 +48,7 @@ create table if not exists tenants (
 );
 
 insert into tenants (id, name, subdomain)
-values ('default', 'Default', 'default')
+values ('default', 'UAT', 'default')
 on conflict (id) do nothing;
 
 -- Sliding-window rate limiting, backed by Postgres rather than in-memory

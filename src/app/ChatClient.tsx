@@ -528,18 +528,16 @@ export default function ChatClient({ tenantSlug }: { tenantSlug: string }) {
         {phoneLoaded && !farmerPhone && <PhoneBanner onSave={handleSavePhone} />}
 
         {messages.length === 0 && (
-          <div className="mx-auto max-w-md pt-12 text-center">
-            <p className="kw-body-large" style={{ color: "var(--color-on-surface-variant)" }}>
-              Ask a question about your business — seeds, crop conditions, or agronomy today.
-            </p>
-            <p className="kw-body-small mt-2" style={{ color: "var(--color-on-surface-variant)" }}>
-              Answers are drawn from the uploaded knowledge base.
-            </p>
+          <div className="mx-auto flex max-w-md flex-col items-center gap-3 pt-16 text-center">
+            <Logo size={40} />
             <p
-              className="kw-body-small mt-4"
-              style={{ borderRadius: "var(--radius-sm)", background: "var(--color-primary-container)", color: "var(--color-on-primary-container)", padding: "8px 12px" }}
+              className="kw-headline-small"
+              style={{ fontFamily: "var(--font-brand)", fontWeight: "var(--weight-bold)", color: "var(--color-on-surface)" }}
             >
-              Farmers should use WhatsApp — send a voice note and get a spoken + written answer back. This page is a secondary demo for testing the pipeline.
+              How can we help today?
+            </p>
+            <p className="kw-body-medium" style={{ color: "var(--color-on-surface-variant)" }}>
+              Ask a question and get an answer grounded in your knowledge base.
             </p>
           </div>
         )}
@@ -619,7 +617,7 @@ export default function ChatClient({ tenantSlug }: { tenantSlug: string }) {
                 if (detectedLanguage) setDetectedLanguage(null);
               }}
               disabled={isRecording}
-              placeholder={isRecording ? "" : "Ask about a crop, pest, or disease…"}
+              placeholder={isRecording ? "" : "Ask a question…"}
               className="w-full outline-none"
               style={{
                 borderRadius: "var(--radius-full)", border: "1px solid var(--color-outline)",
