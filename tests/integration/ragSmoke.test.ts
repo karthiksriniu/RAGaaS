@@ -18,7 +18,7 @@ describe("RAG pipeline smoke test (real LLM calls)", () => {
   // askIsolation.test.ts's two calls right before it can otherwise collide
   // and produce a spurious 500. A short gap keeps this suite reliable
   // without adding retry/backoff to the app code just for test pacing.
-  beforeEach(() => wait(5000));
+  beforeEach(() => wait(20000));
 
   it("returns a grounded, cited answer for a well-covered question", async () => {
     const res = await fetch(`${baseUrl()}/api/ask`, {

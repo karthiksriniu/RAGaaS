@@ -49,7 +49,7 @@ describe("cross-tenant content isolation (real LLM calls - kept to 2 cases)", ()
   // file's real calls (and between the two sequential ones below) keeps
   // the suite reliable without adding retry/backoff to the app just for
   // test pacing. Same reasoning as ragSmoke.test.ts.
-  beforeEach(() => wait(5000));
+  beforeEach(() => wait(20000));
 
   it("default and testinsuranceco each only ever cite their own KB", async () => {
     const defaultRes = await fetch(`${baseUrl()}/api/ask`, {
@@ -66,7 +66,7 @@ describe("cross-tenant content isolation (real LLM calls - kept to 2 cases)", ()
       expect(citation.source_uri).not.toContain("exotic_fruits");
     }
 
-    await wait(5000);
+    await wait(20000);
     const otherRes = await fetch(`${baseUrl()}/api/ask`, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
