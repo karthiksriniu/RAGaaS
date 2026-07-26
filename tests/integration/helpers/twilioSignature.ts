@@ -2,15 +2,19 @@ import twilio from "twilio";
 import { requireEnv } from "./adminSession";
 
 /** Builds a validly-signed synthetic Twilio webhook request against the
- * staging deployment's actual webhook URL and auth token - the same
- * technique used for manual verification earlier in this project. */
-export function signWebhookParams(params: Record<string, string>): {
+ * staging deployment's actual webhook URL - the same technique used for
+ * manual verification earlier in this project. Defaults to the shared
+ * TEST_TWILIO_AUTH_TOKEN; pass authToken explicitly to sign as a specific
+ * tenant's own (fake, for test purposes) subaccount credentials instead. */
+export function signWebhookParams(
+  params: Record<string, string>,
+  authToken: string = requireEnv("TEST_TWILIO_AUTH_TOKEN")
+): {
   url: string;
   signature: string;
   body: string;
 } {
   const baseUrl = requireEnv("TEST_BASE_URL");
-  const authToken = requireEnv("TEST_TWILIO_AUTH_TOKEN");
   const url = `${baseUrl}/api/whatsapp/webhook`;
 
   const signature = twilio.getExpectedTwilioSignature(authToken, url, params);
@@ -20,9 +24,10 @@ export function signWebhookParams(params: Record<string, string>): {
 
 export async function postSignedWebhook(
   params: Record<string, string>,
-  signatureOverride?: string
+  signatureOverride?: string,
+  authToken?: string
 ): Promise<Response> {
-  const { url, signature, body } = signWebhookParams(params);
+  const { url, signature, body } = signWebhookParams(params, authToken);
   return fetch(url, {
     method: "POST",
     headers: {

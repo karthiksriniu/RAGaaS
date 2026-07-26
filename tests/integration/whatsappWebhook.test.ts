@@ -161,4 +161,31 @@ describe("WhatsApp webhook", () => {
     expect(await wasMessageClaimed(sid)).toBe(true);
     expect(await latestVoiceReplyId()).not.toBe(before); // reached TTS/storage this time
   });
+
+  it("validates against a tenant's own Twilio credentials, not the platform's shared token, once configured", async () => {
+    const testNumber = `+1555${(Date.now() + 3).toString().slice(-7)}`;
+    const fakeAccountSid = `AC${"0".repeat(32)}`;
+    const fakeAuthToken = "test-subaccount-fake-auth-token-000";
+    await createTestTenant("wa-subaccount", {
+      whatsappNumber: testNumber,
+      twilioAccountSid: fakeAccountSid,
+      twilioAuthToken: fakeAuthToken,
+    });
+
+    const globalSigned = await postSignedWebhook({
+      MessageSid: uniqueMessageSid(),
+      From: FARMER_FROM(),
+      To: `whatsapp:${testNumber}`,
+      Body: "hello",
+      NumMedia: "0",
+    }); // signed with the shared TEST_TWILIO_AUTH_TOKEN (the default) - wrong for this tenant now
+    expect(globalSigned.status).toBe(403);
+
+    const ownSigned = await postSignedWebhook(
+      { MessageSid: uniqueMessageSid(), From: FARMER_FROM(), To: `whatsapp:${testNumber}`, Body: "hello", NumMedia: "0" },
+      undefined,
+      fakeAuthToken
+    );
+    expect(ownSigned.status).toBe(200);
+  });
 });

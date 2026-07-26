@@ -11,6 +11,8 @@ interface CreateTestTenantOptions {
   name?: string;
   licenseExpiresAt?: string | null;
   whatsappNumber?: string | null;
+  twilioAccountSid?: string | null;
+  twilioAuthToken?: string | null;
 }
 
 /** Creates a tenant via the real admin API (not direct SQL) so tests exercise
@@ -31,6 +33,8 @@ export async function createTestTenant(
       subdomain: id,
       licenseExpiresAt: options.licenseExpiresAt ?? null,
       whatsappNumber: options.whatsappNumber ?? null,
+      twilioAccountSid: options.twilioAccountSid ?? null,
+      twilioAuthToken: options.twilioAuthToken ?? null,
     }),
   });
   if (!res.ok) {
