@@ -4,6 +4,7 @@ import {
   updateTenantLicense,
   updateTenantWhatsappNumber,
   TenantNotFoundError,
+  DefaultTenantProtectedError,
 } from "@/lib/tenants";
 
 export const runtime = "nodejs";
@@ -52,6 +53,9 @@ export async function PATCH(
   } catch (err) {
     if (err instanceof TenantNotFoundError) {
       return NextResponse.json({ error: err.message }, { status: 404 });
+    }
+    if (err instanceof DefaultTenantProtectedError) {
+      return NextResponse.json({ error: err.message }, { status: 400 });
     }
     const pgErr = err as { code?: string; constraint?: string };
     if (pgErr.code === "23505") {

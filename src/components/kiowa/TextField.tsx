@@ -56,8 +56,16 @@ export function TextField({
   const accent = error ? "var(--color-error)" : focused ? "var(--color-primary)" : "var(--color-outline)";
   const isOutlined = variant === "outlined";
 
+  // A floated outlined label sits at top: -28px, entirely above the input
+  // box itself - reserved here as a fixed spacer (not a marginTop merged
+  // into `style`, which a caller's own style overrides could clobber) so
+  // it can never collide with whatever renders immediately above this
+  // field, regardless of how much gap the surrounding layout provides.
+  const reserveLabelSpace = isOutlined && !!label;
+
   return (
     <div style={{ display: "inline-flex", flexDirection: "column", gap: 4, fontFamily: "var(--font-ui)", minWidth: 220, ...style }}>
+      {reserveLabelSpace && <div style={{ height: 14 }} />}
       <div
         style={{
           position: "relative",

@@ -24,6 +24,20 @@ export class TenantExpiredError extends Error {
   }
 }
 
+/** 'default' is the standing UAT/QA tenant admins and the demo web chat
+ * fall back to - an accidental past-dated expiry on it would 403 every
+ * farmer-facing and admin-facing check that runs through
+ * assertTenantLicensed, with no other tenant to fall back to. Guarded here
+ * (not just in the UI) so it can't happen via a direct API call either. */
+export class DefaultTenantProtectedError extends Error {
+  constructor() {
+    super("The default tenant's license can't be set to expire.");
+    this.name = "DefaultTenantProtectedError";
+  }
+}
+
+const PROTECTED_TENANT_ID = "default";
+
 interface TenantRow {
   id: string;
   name: string;
@@ -120,6 +134,9 @@ export async function updateTenantLicense(
   id: string,
   licenseExpiresAt: string | null
 ): Promise<Tenant> {
+  if (id === PROTECTED_TENANT_ID && licenseExpiresAt !== null) {
+    throw new DefaultTenantProtectedError();
+  }
   const result = await pool.query<TenantRow>(
     `UPDATE tenants SET license_expires_at = $2 WHERE id = $1 AND archived_at IS NULL RETURNING *`,
     [id, licenseExpiresAt]

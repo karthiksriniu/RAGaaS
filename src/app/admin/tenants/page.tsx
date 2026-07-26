@@ -21,6 +21,12 @@ interface Tenant {
 
 const E164 = /^\+[1-9]\d{7,14}$/;
 
+// The standing UAT/QA tenant the demo web chat and default WhatsApp number
+// fall back to - its license can't be set to expire (guarded server-side
+// too, in src/lib/tenants.ts), and it's called out distinctly here rather
+// than shown as just another "active" tenant.
+const PROTECTED_TENANT_ID = "default";
+
 function isExpired(tenant: Tenant): boolean {
   return !!tenant.licenseExpiresAt && new Date(tenant.licenseExpiresAt) <= new Date();
 }
@@ -205,14 +211,21 @@ export default function AdminTenants() {
           Tenants
         </h2>
         <div className="flex flex-col gap-3">
-          {tenants.map((t) => {
+          {[...tenants]
+            .sort((a, b) => (a.id === PROTECTED_TENANT_ID ? -1 : b.id === PROTECTED_TENANT_ID ? 1 : 0))
+            .map((t) => {
+            const isProtected = t.id === PROTECTED_TENANT_ID;
             const expired = isExpired(t);
             const url = rootDomain ? `https://${t.subdomain}.${rootDomain}` : null;
             return (
               <Card key={t.id} variant="outlined" padding={16}>
                 <div className="flex items-center gap-2">
                   <span className="kw-title-small" style={{ color: "var(--color-on-surface)" }}>{t.name}</span>
-                  <StatusPill label={expired ? "expired" : "active"} tone={expired ? "urgent" : "success"} />
+                  {isProtected ? (
+                    <StatusPill label="default" tone="primary" />
+                  ) : (
+                    <StatusPill label={expired ? "expired" : "active"} tone={expired ? "urgent" : "success"} />
+                  )}
                 </div>
                 {url && (
                   <a
@@ -226,7 +239,13 @@ export default function AdminTenants() {
                   </a>
                 )}
 
-                {editingLicenseId === t.id ? (
+                {isProtected ? (
+                  <div className="mt-3 flex items-center gap-3">
+                    <span className="kw-body-small" style={{ color: "var(--color-on-surface-variant)" }}>
+                      No expiry — protected from ever being set
+                    </span>
+                  </div>
+                ) : editingLicenseId === t.id ? (
                   <div className="mt-3 flex flex-wrap items-center gap-2">
                     <TextField type="date" value={editDate} onChange={(e) => setEditDate(e.target.value)} style={{ minWidth: 180 }} />
                     <Button type="button" variant="filled" size="small" onClick={() => saveEditLicense(t.id)}>Save</Button>

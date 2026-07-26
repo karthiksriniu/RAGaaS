@@ -510,7 +510,16 @@ export default function ChatClient({ tenantSlug }: { tenantSlug: string }) {
   }
 
   return (
-    <div className="flex h-screen flex-col" style={{ background: "var(--color-surface)", color: "var(--color-on-surface)" }}>
+    <div
+      // h-dvh (dynamic viewport height), not h-screen (100vh): 100vh is
+      // computed against the mobile browser's largest possible viewport
+      // (address bar collapsed), so on load - before the user scrolls, with
+      // the address bar still showing - the page renders taller than what's
+      // actually visible, pushing the input bar below the fold until the
+      // page itself is scrolled. dvh tracks the real, current viewport.
+      className="flex h-dvh flex-col"
+      style={{ background: "var(--color-surface)", color: "var(--color-on-surface)" }}
+    >
       <header
         className="flex items-center justify-between px-4 py-3"
         style={{ borderBottom: "1px solid var(--color-outline-variant)", background: "var(--color-surface-container-lowest)" }}
@@ -520,7 +529,6 @@ export default function ChatClient({ tenantSlug }: { tenantSlug: string }) {
           <h1 className="kw-title-large" style={{ fontFamily: "var(--font-brand)", fontWeight: "var(--weight-bold)", color: "var(--color-primary)" }}>
             MyBizCare
           </h1>
-          <StatusPill label="Web demo" tone="neutral" />
         </div>
       </header>
 
@@ -537,7 +545,7 @@ export default function ChatClient({ tenantSlug }: { tenantSlug: string }) {
               How can we help today?
             </p>
             <p className="kw-body-medium" style={{ color: "var(--color-on-surface-variant)" }}>
-              Ask a question and get an answer grounded in your knowledge base.
+              Tell us what's going on, and we'll help you find the next step.
             </p>
           </div>
         )}
