@@ -1,19 +1,9 @@
-import { Client } from "pg";
-import { readFileSync } from "fs";
-import { fileURLToPath } from "url";
-import { dirname, join } from "path";
-import dotenv from "dotenv";
-
-const __dirname = dirname(fileURLToPath(import.meta.url));
-dotenv.config({ path: join(__dirname, "..", ".env.local") });
-
-const target = process.argv[2] || "schema.sql";
-const sql = readFileSync(join(__dirname, target), "utf-8");
-
-// Supabase's own root CA (public, not project-specific - same cert used in
-// src/lib/supabaseCa.ts). Duplicated here rather than imported since this
-// is a plain Node script, not part of the TS build.
-const SUPABASE_ROOT_CA = `-----BEGIN CERTIFICATE-----
+/** Supabase's own root CA (public, not project-specific - same cert for
+ * every Supabase project). Embedded directly rather than read from a file
+ * at runtime, since a Vercel serverless function's bundle isn't guaranteed
+ * to include an arbitrary file referenced only via fs.readFileSync. Valid
+ * 2021-04-28 to 2031-04-26. */
+export const SUPABASE_ROOT_CA = `-----BEGIN CERTIFICATE-----
 MIIDxDCCAqygAwIBAgIUbLxMod62P2ktCiAkxnKJwtE9VPYwDQYJKoZIhvcNAQEL
 BQAwazELMAkGA1UEBhMCVVMxEDAOBgNVBAgMB0RlbHdhcmUxEzARBgNVBAcMCk5l
 dyBDYXN0bGUxFTATBgNVBAoMDFN1cGFiYXNlIEluYzEeMBwGA1UEAwwVU3VwYWJh
@@ -37,20 +27,3 @@ CMTyZKG3XEu5Ghl1LEnI3QmEKsqaCLv12BnVjbkSeZsMnevJPs1Ye6TjjJwdik5P
 o/bKiIz+Fq8=
 -----END CERTIFICATE-----
 `;
-
-const client = new Client({
-  connectionString: process.env.SUPABASE_DB_URL,
-  ssl: { ca: SUPABASE_ROOT_CA },
-});
-
-async function main() {
-  await client.connect();
-  await client.query(sql);
-  console.log(`Migration applied successfully: ${target}`);
-  await client.end();
-}
-
-main().catch((err) => {
-  console.error("Migration failed:", err);
-  process.exit(1);
-});

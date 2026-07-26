@@ -1,4 +1,5 @@
 import { Client } from "pg";
+import { SUPABASE_ROOT_CA } from "@/lib/supabaseCa";
 
 /** Owner-privileged connection to the STAGING database only, for seeding
  * test fixtures and cleanup. Never used against production - see the
@@ -24,5 +25,5 @@ export function getTestDbClient(): Client {
     );
   }
 
-  return new Client({ connectionString, ssl: { rejectUnauthorized: false } });
+  return new Client({ connectionString, ssl: { ca: SUPABASE_ROOT_CA } });
 }

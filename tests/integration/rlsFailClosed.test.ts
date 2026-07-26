@@ -1,6 +1,7 @@
 import { describe, it, expect } from "vitest";
 import { Client } from "pg";
 import { requireEnv } from "./helpers/adminSession";
+import { SUPABASE_ROOT_CA } from "@/lib/supabaseCa";
 
 /** Connects as the app's own less-privileged runtime role (not the owner
  * connection used elsewhere for seeding/cleanup) - this is the same role
@@ -8,7 +9,7 @@ import { requireEnv } from "./helpers/adminSession";
  * actually experiences under RLS. */
 function getAppRuntimeClient(): Client {
   const connectionString = requireEnv("TEST_SUPABASE_DB_URL_APP_RUNTIME");
-  return new Client({ connectionString, ssl: { rejectUnauthorized: false } });
+  return new Client({ connectionString, ssl: { ca: SUPABASE_ROOT_CA } });
 }
 
 describe("Postgres RLS fail-closed proof", () => {

@@ -1,4 +1,5 @@
 import { Pool, PoolClient } from "pg";
+import { SUPABASE_ROOT_CA } from "@/lib/supabaseCa";
 
 declare global {
   // eslint-disable-next-line no-var
@@ -14,7 +15,7 @@ export const pool =
   global._pgPool ??
   new Pool({
     connectionString,
-    ssl: { rejectUnauthorized: false },
+    ssl: { ca: SUPABASE_ROOT_CA },
   });
 
 if (process.env.NODE_ENV !== "production") global._pgPool = pool;
