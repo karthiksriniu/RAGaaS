@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import twilio from "twilio";
 import { assertTenantLicensed, TenantNotFoundError, TenantExpiredError } from "@/lib/tenants";
+import { checkRateLimit, getClientIp } from "@/lib/rateLimit";
 
 export const runtime = "nodejs";
 
@@ -21,6 +22,30 @@ export async function POST(req: NextRequest) {
     }
     if (!tenantId || typeof tenantId !== "string") {
       return NextResponse.json({ error: "tenantId is required" }, { status: 400 });
+    }
+
+    const trimmedPhone = farmerPhone.trim();
+    const ip = getClientIp(req);
+
+    // This endpoint places a real, billed phone call to an arbitrary number
+    // supplied by the caller - it's the one public endpoint where a missing
+    // rate limit is a direct real-world harassment/cost vector, not just a
+    // resource-exhaustion concern. Two independent caps: per-IP (general
+    // abuse) and per-phone-number (stops repeated calls to one victim number
+    // even from a rotating/distributed set of IPs).
+    const ipWithinLimit = await checkRateLimit(`escalate:ip:${ip}`, 60_000, 5);
+    if (!ipWithinLimit) {
+      return NextResponse.json(
+        { error: "Too many requests. Please try again in a minute." },
+        { status: 429 }
+      );
+    }
+    const phoneWithinLimit = await checkRateLimit(`escalate:phone:${trimmedPhone}`, 60 * 60_000, 3);
+    if (!phoneWithinLimit) {
+      return NextResponse.json(
+        { error: "This number has reached the limit of escalation calls for now. Please try again later." },
+        { status: 429 }
+      );
     }
 
     try {
@@ -51,7 +76,7 @@ export async function POST(req: NextRequest) {
     const expertUrl = `${baseUrl}/api/voice/conference?room=${encodeURIComponent(room)}&role=expert&question=${encodeURIComponent(truncatedQuestion)}`;
 
     const [farmerCall, expertCall] = await Promise.all([
-      client.calls.create({ to: farmerPhone.trim(), from: twilioNumber, url: farmerUrl }),
+      client.calls.create({ to: trimmedPhone, from: twilioNumber, url: farmerUrl }),
       client.calls.create({ to: expertPhone, from: twilioNumber, url: expertUrl }),
     ]);
 

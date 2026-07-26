@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { answerQuestion } from "@/lib/answerQuestion";
 import { assertTenantLicensed, TenantNotFoundError, TenantExpiredError } from "@/lib/tenants";
+import { checkRateLimit, getClientIp } from "@/lib/rateLimit";
 
 export const runtime = "nodejs";
 
@@ -12,6 +13,15 @@ export async function POST(req: NextRequest) {
     }
     if (!tenantId || typeof tenantId !== "string") {
       return NextResponse.json({ error: "tenantId is required" }, { status: 400 });
+    }
+
+    const ip = getClientIp(req);
+    const withinLimit = await checkRateLimit(`ask:ip:${ip}`, 60_000, 20);
+    if (!withinLimit) {
+      return NextResponse.json(
+        { error: "Too many requests. Please try again in a minute." },
+        { status: 429 }
+      );
     }
 
     try {

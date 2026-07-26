@@ -1,10 +1,20 @@
 import { NextRequest, NextResponse } from "next/server";
 import { transcribeAudio } from "@/lib/sarvam";
+import { checkRateLimit, getClientIp } from "@/lib/rateLimit";
 
 export const runtime = "nodejs";
 
 export async function POST(req: NextRequest) {
   try {
+    const ip = getClientIp(req);
+    const withinLimit = await checkRateLimit(`transcribe:ip:${ip}`, 60_000, 20);
+    if (!withinLimit) {
+      return NextResponse.json(
+        { error: "Too many requests. Please try again in a minute." },
+        { status: 429 }
+      );
+    }
+
     const incoming = await req.formData();
     const audio = incoming.get("audio");
 

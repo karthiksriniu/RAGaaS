@@ -50,3 +50,18 @@ create table if not exists tenants (
 insert into tenants (id, name, subdomain)
 values ('default', 'Default', 'default')
 on conflict (id) do nothing;
+
+-- Sliding-window rate limiting, backed by Postgres rather than in-memory
+-- counters because Vercel serverless functions are stateless per-invocation
+-- and don't share memory across concurrent instances. bucket_key encodes
+-- both the endpoint/limit-type and identifier, e.g. "ask:ip:1.2.3.4" or
+-- "escalate:phone:+919840000000". Rows are cleaned up opportunistically by
+-- checkRateLimit() itself rather than a separate cron job.
+create table if not exists rate_limit_events (
+  id bigserial primary key,
+  bucket_key text not null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists rate_limit_events_bucket_idx
+  on rate_limit_events (bucket_key, created_at);
