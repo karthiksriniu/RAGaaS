@@ -17,6 +17,16 @@ function postEscalate(body: Record<string, unknown>) {
   });
 }
 
+// The per-phone rate limit's window is a full hour, so a hardcoded test
+// phone number would carry leftover request counts into the NEXT run of
+// this suite within that hour and get spuriously blocked. Deriving numbers
+// from the current timestamp keeps every run's phone numbers fresh.
+const RUN_SEED = Date.now() % 1_000_000_000;
+function testPhone(offset: number): string {
+  const n = (RUN_SEED + offset) % 1_000_000_000;
+  return `+91${String(n).padStart(9, "0")}`;
+}
+
 describe("/api/escalate validation", () => {
   afterAll(cleanupTestTenants);
 
@@ -26,14 +36,14 @@ describe("/api/escalate validation", () => {
   });
 
   it("rejects a missing tenantId with 400", async () => {
-    const res = await postEscalate({ question: "test", farmerPhone: "+919840000000" });
+    const res = await postEscalate({ question: "test", farmerPhone: testPhone(0) });
     expect(res.status).toBe(400);
   });
 
   it("rejects an unknown tenant with 403", async () => {
     const res = await postEscalate({
       question: "test",
-      farmerPhone: "+919840000000",
+      farmerPhone: testPhone(1),
       tenantId: "no-such-tenant-ever",
     });
     expect(res.status).toBe(403);
@@ -41,7 +51,7 @@ describe("/api/escalate validation", () => {
 
   it("rejects an expired tenant with 403", async () => {
     const { id } = await createTestTenant("escalate-expired", { licenseExpiresAt: "2020-01-01" });
-    const res = await postEscalate({ question: "test", farmerPhone: "+919840000000", tenantId: id });
+    const res = await postEscalate({ question: "test", farmerPhone: testPhone(2), tenantId: id });
     expect(res.status).toBe(403);
   });
 });
@@ -57,7 +67,7 @@ describe("/api/escalate validation", () => {
 describe("/api/escalate rate limiting (real requests, no real calls placed - blocked before Twilio)", () => {
   it("blocks the 4th request within an hour to the same phone number with 429", async () => {
     await wait(61000);
-    const phone = "+919840000099"; // dedicated to this test, never reused elsewhere
+    const phone = testPhone(100); // dedicated to this test, never reused elsewhere
     const responses: number[] = [];
     for (let i = 0; i < 4; i++) {
       const res = await postEscalate({ question: "test", farmerPhone: phone, tenantId: "no-such-tenant-ever" });
@@ -77,7 +87,7 @@ describe("/api/escalate rate limiting (real requests, no real calls placed - blo
     for (let i = 0; i < 6; i++) {
       const res = await postEscalate({
         question: "test",
-        farmerPhone: `+91984000010${i}`,
+        farmerPhone: testPhone(200 + i),
         tenantId: "no-such-tenant-ever",
       });
       responses.push(res.status);
