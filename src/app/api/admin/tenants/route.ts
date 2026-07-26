@@ -33,7 +33,7 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
   }
   try {
-    const { name, subdomain, licenseExpiresAt, whatsappNumber } = await req.json();
+    const { name, subdomain, licenseExpiresAt, whatsappNumber, twilioAccountSid, twilioAuthToken } = await req.json();
 
     if (!name || typeof name !== "string" || !name.trim()) {
       return NextResponse.json({ error: "name is required" }, { status: 400 });
@@ -66,12 +66,21 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    if ((twilioAccountSid && !twilioAuthToken) || (!twilioAccountSid && twilioAuthToken)) {
+      return NextResponse.json(
+        { error: "twilioAccountSid and twilioAuthToken must be provided together" },
+        { status: 400 }
+      );
+    }
+
     const tenant = await createTenant({
       id: slug,
       name: name.trim(),
       subdomain: slug,
       licenseExpiresAt: licenseExpiresAt || null,
       twilioWhatsappNumber: whatsappNumber ? `whatsapp:${whatsappNumber.trim()}` : null,
+      twilioAccountSid: twilioAccountSid?.trim() || null,
+      twilioAuthToken: twilioAuthToken?.trim() || null,
     });
 
     const rootDomain = process.env.TENANT_ROOT_DOMAIN;

@@ -39,15 +39,14 @@ const MODES: Record<SourceClass, Record<Criticality, AnswerMode>> = {
   KB_GROUNDED: {
     ROUTINE: {
       confidenceLabel: "Confident recommendation",
-      promptGuidance:
-        "The knowledge base has a strong match for this question. Answer with a confident, direct recommendation, citing the source.",
+      promptGuidance: "There's a strong context match for this question. Give a direct, specific recommendation.",
       showEscalation: false,
       safetyFooter: false,
     },
     CRITICAL: {
       confidenceLabel: "Confident recommendation",
       promptGuidance:
-        "The knowledge base has a strong match for this critical question. Answer with a confident, direct recommendation, citing the source, then end with a brief safety reminder to confirm dosage and timing against the product label before acting.",
+        "There's a strong context match for this critical question. Give a direct, specific recommendation, then end with a brief safety reminder to confirm dosage and timing against the product label before acting.",
       showEscalation: false,
       safetyFooter: true,
     },

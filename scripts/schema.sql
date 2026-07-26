@@ -44,7 +44,18 @@ create table if not exists tenants (
   twilio_whatsapp_number text unique,
   license_expires_at timestamptz,
   archived_at timestamptz,
-  created_at timestamptz not null default now()
+  created_at timestamptz not null default now(),
+  -- A tenant's WhatsApp number can live on its own Twilio subaccount
+  -- (distinct Account SID + Auth Token from the platform's main account) -
+  -- Twilio signs webhook requests and requires sending using the
+  -- credentials of whichever account actually owns the number. Both null
+  -- (the common case) means "use the platform's global TWILIO_ACCOUNT_SID/
+  -- TWILIO_AUTH_TOKEN env vars"; both set means "use this tenant's own".
+  -- Enforced as both-or-neither at the application layer, not here.
+  -- twilio_auth_token is never returned by any API response - see
+  -- src/lib/tenants.ts.
+  twilio_account_sid text,
+  twilio_auth_token text
 );
 
 insert into tenants (id, name, subdomain)

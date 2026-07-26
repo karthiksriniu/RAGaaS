@@ -4,24 +4,29 @@ import twilio from "twilio";
 import { pool } from "@/lib/db";
 import { transcribeAudio, translateText, textToSpeech } from "@/lib/sarvam";
 import { answerQuestion } from "@/lib/answerQuestion";
-import { getTenantByWhatsappNumber } from "@/lib/tenants";
+import { getTenantByWhatsappNumber, getTwilioCredentials, type TwilioCredentials } from "@/lib/tenants";
 import { formatForWhatsApp, splitForWhatsApp } from "@/lib/whatsappFormatting";
 
 export const runtime = "nodejs";
 export const maxDuration = 60;
 
-const twilioClient = twilio(process.env.TWILIO_ACCOUNT_SID, process.env.TWILIO_AUTH_TOKEN);
+// A tenant's WhatsApp number can live on its own Twilio subaccount (its own
+// Account SID + Auth Token, distinct from the platform's main account) -
+// Twilio signs webhook requests, and requires sending, using the
+// credentials of whichever account actually owns the number. So there's no
+// single module-level client here: credentials are resolved per-request via
+// getTwilioCredentials(), based on which tenant the inbound "To" number
+// belongs to.
 
-async function sendWhatsAppText(from: string, to: string, text: string) {
+async function sendWhatsAppText(credentials: TwilioCredentials, from: string, to: string, text: string) {
+  const client = twilio(credentials.accountSid, credentials.authToken);
   for (const chunk of splitForWhatsApp(text)) {
-    await twilioClient.messages.create({ from, to, body: chunk });
+    await client.messages.create({ from, to, body: chunk });
   }
 }
 
-async function downloadTwilioMedia(mediaUrl: string): Promise<Blob> {
-  const accountSid = process.env.TWILIO_ACCOUNT_SID || "";
-  const authToken = process.env.TWILIO_AUTH_TOKEN || "";
-  const auth = Buffer.from(`${accountSid}:${authToken}`).toString("base64");
+async function downloadTwilioMedia(credentials: TwilioCredentials, mediaUrl: string): Promise<Blob> {
+  const auth = Buffer.from(`${credentials.accountSid}:${credentials.authToken}`).toString("base64");
 
   const res = await fetch(mediaUrl, {
     headers: { Authorization: `Basic ${auth}` },
@@ -57,7 +62,11 @@ async function claimMessage(messageSid: string): Promise<boolean> {
   return (result.rowCount ?? 0) > 0;
 }
 
-async function handleIncomingMessage(params: URLSearchParams) {
+async function handleIncomingMessage(
+  params: URLSearchParams,
+  tenant: Awaited<ReturnType<typeof getTenantByWhatsappNumber>>,
+  credentials: TwilioCredentials
+) {
   const from = params.get("From") || ""; // the farmer, e.g. "whatsapp:+919876543210"
   const to = params.get("To") || ""; // the number the message arrived at - identifies the tenant
   const numMedia = parseInt(params.get("NumMedia") || "0", 10);
@@ -74,14 +83,16 @@ async function handleIncomingMessage(params: URLSearchParams) {
 
   try {
     // Each tenant owns a distinct WhatsApp number; which number a message
-    // arrived at is exactly which tenant it belongs to.
-    const tenant = await getTenantByWhatsappNumber(to);
+    // arrived at is exactly which tenant it belongs to. Already resolved by
+    // the caller (POST), which needed it to pick the right credentials for
+    // signature validation before this function ever runs.
     if (!tenant) {
-      await sendWhatsAppText(to, from, "This number isn't set up yet. Please contact the business directly.");
+      await sendWhatsAppText(credentials, to, from, "This number isn't set up yet. Please contact the business directly.");
       return;
     }
     if (tenant.licenseExpiresAt && new Date(tenant.licenseExpiresAt) <= new Date()) {
       await sendWhatsAppText(
+        credentials,
         to,
         from,
         "This service is currently unavailable. Please contact the business for details."
@@ -94,13 +105,14 @@ async function handleIncomingMessage(params: URLSearchParams) {
     let farmerLanguageCode = "en-IN";
 
     if (numMedia > 0 && mediaUrl && mediaContentType.startsWith("audio")) {
-      const audioBlob = await downloadTwilioMedia(mediaUrl);
+      const audioBlob = await downloadTwilioMedia(credentials, mediaUrl);
       const transcription = await transcribeAudio(audioBlob, "voice-note.ogg");
       question = transcription.transcript;
       farmerLanguageCode = transcription.languageCode || "en-IN";
 
       if (!question) {
         await sendWhatsAppText(
+          credentials,
           to,
           from,
           "Sorry, I couldn't make out that voice note. Could you try again, speaking clearly?"
@@ -111,6 +123,7 @@ async function handleIncomingMessage(params: URLSearchParams) {
       question = textBody;
     } else {
       await sendWhatsAppText(
+        credentials,
         to,
         from,
         "Send a voice note or a text message with your question about crops, pests, or diseases."
@@ -125,7 +138,8 @@ async function handleIncomingMessage(params: URLSearchParams) {
     const speech = await textToSpeech(translatedSummary, farmerLanguageCode);
     const audioUrl = await storeAudioAndGetUrl(speech.audioBase64, speech.contentType);
 
-    await twilioClient.messages.create({
+    const client = twilio(credentials.accountSid, credentials.authToken);
+    await client.messages.create({
       from: to,
       to: from,
       mediaUrl: [audioUrl],
@@ -137,11 +151,12 @@ async function handleIncomingMessage(params: URLSearchParams) {
       detailText += `\n\n⚠️ This needs expert confirmation before you act. Call an agronomist now: ${expertPhone}`;
     }
 
-    await sendWhatsAppText(to, from, detailText);
+    await sendWhatsAppText(credentials, to, from, detailText);
   } catch (err) {
     console.error("/api/whatsapp/webhook processing failed:", err);
     try {
       await sendWhatsAppText(
+        credentials,
         to,
         from,
         "Sorry, something went wrong answering that. Please try again in a moment."
@@ -155,17 +170,20 @@ async function handleIncomingMessage(params: URLSearchParams) {
 export async function POST(req: NextRequest) {
   const rawBody = await req.text();
   const params = new URLSearchParams(rawBody);
+  const to = params.get("To") || "";
+
+  // Resolved before signature validation: which credentials a request must
+  // be signed with depends on which tenant (if any) owns the number the
+  // message arrived at - a tenant on its own Twilio subaccount is signed
+  // with that subaccount's Auth Token, not the platform's global one.
+  const tenant = await getTenantByWhatsappNumber(to);
+  const credentials = await getTwilioCredentials(tenant?.id ?? null);
 
   const signature = req.headers.get("x-twilio-signature") || "";
   const url = `${process.env.APP_BASE_URL}/api/whatsapp/webhook`;
   const paramsObject = Object.fromEntries(params.entries());
 
-  const isValid = twilio.validateRequest(
-    process.env.TWILIO_AUTH_TOKEN || "",
-    signature,
-    url,
-    paramsObject
-  );
+  const isValid = twilio.validateRequest(credentials.authToken, signature, url, paramsObject);
 
   if (!isValid) {
     console.warn("Rejected WhatsApp webhook with invalid Twilio signature");
@@ -174,7 +192,7 @@ export async function POST(req: NextRequest) {
 
   // Ack Twilio immediately; do the actual STT/RAG/TTS/reply pipeline after
   // the response is sent so we're not racing Twilio's webhook timeout.
-  after(() => handleIncomingMessage(params));
+  after(() => handleIncomingMessage(params, tenant, credentials));
 
   return new NextResponse("<Response></Response>", {
     status: 200,

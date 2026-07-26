@@ -14,6 +14,8 @@ interface Tenant {
   name: string;
   subdomain: string;
   twilioWhatsappNumber: string | null;
+  twilioAccountSid: string | null;
+  hasCustomTwilioAuthToken: boolean;
   licenseExpiresAt: string | null;
   archivedAt: string | null;
   createdAt: string;
@@ -50,6 +52,8 @@ export default function AdminTenants() {
   const [subdomain, setSubdomain] = useState("");
   const [licenseExpiresAt, setLicenseExpiresAt] = useState("");
   const [whatsappNumber, setWhatsappNumber] = useState("");
+  const [twilioAccountSid, setTwilioAccountSid] = useState("");
+  const [twilioAuthToken, setTwilioAuthToken] = useState("");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [editingLicenseId, setEditingLicenseId] = useState<string | null>(null);
@@ -57,6 +61,10 @@ export default function AdminTenants() {
   const [editingNumberId, setEditingNumberId] = useState<string | null>(null);
   const [editNumber, setEditNumber] = useState("");
   const [editNumberError, setEditNumberError] = useState<string | null>(null);
+  const [editingTwilioId, setEditingTwilioId] = useState<string | null>(null);
+  const [editTwilioSid, setEditTwilioSid] = useState("");
+  const [editTwilioToken, setEditTwilioToken] = useState("");
+  const [editTwilioError, setEditTwilioError] = useState<string | null>(null);
   const router = useRouter();
 
   async function refresh() {
@@ -88,6 +96,8 @@ export default function AdminTenants() {
           subdomain: subdomain.trim(),
           licenseExpiresAt: licenseExpiresAt || null,
           whatsappNumber: whatsappNumber.trim() || null,
+          twilioAccountSid: twilioAccountSid.trim() || null,
+          twilioAuthToken: twilioAuthToken.trim() || null,
         }),
       });
       const data = await res.json();
@@ -96,6 +106,8 @@ export default function AdminTenants() {
       setSubdomain("");
       setLicenseExpiresAt("");
       setWhatsappNumber("");
+      setTwilioAccountSid("");
+      setTwilioAuthToken("");
       await refresh();
     } catch (err) {
       setCreateError(err instanceof Error ? err.message : String(err));
@@ -142,6 +154,38 @@ export default function AdminTenants() {
       return;
     }
     setEditingNumberId(null);
+    await refresh();
+  }
+
+  function startEditTwilio(tenant: Tenant) {
+    setEditingTwilioId(tenant.id);
+    // Never pre-filled with the real values - the API never returns the
+    // auth token, and re-showing the account SID here would invite
+    // accidentally saving a stale/half-edited pair. Blank fields with
+    // "Save" meaning "replace with these" is the accurate model.
+    setEditTwilioSid("");
+    setEditTwilioToken("");
+    setEditTwilioError(null);
+  }
+
+  async function saveEditTwilio(id: string) {
+    const sid = editTwilioSid.trim();
+    const token = editTwilioToken.trim();
+    if ((sid && !token) || (!sid && token)) {
+      setEditTwilioError("Provide both the Account SID and Auth Token together, or leave both blank to clear");
+      return;
+    }
+    const res = await fetch(`/api/admin/tenants/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ twilioAccountSid: sid || null, twilioAuthToken: token || null }),
+    });
+    const data = await res.json();
+    if (!res.ok) {
+      setEditTwilioError(data.error || "Could not save");
+      return;
+    }
+    setEditingTwilioId(null);
     await refresh();
   }
 
@@ -194,6 +238,20 @@ export default function AdminTenants() {
               placeholder="+14155238886"
               value={whatsappNumber}
               onChange={(e) => setWhatsappNumber(e.target.value)}
+              style={{ width: "100%" }}
+            />
+            <TextField
+              label="Twilio Account SID (optional - only if this tenant has its own subaccount)"
+              placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+              value={twilioAccountSid}
+              onChange={(e) => setTwilioAccountSid(e.target.value)}
+              style={{ width: "100%" }}
+            />
+            <TextField
+              label="Twilio Auth Token (required together with the Account SID above)"
+              type="password"
+              value={twilioAuthToken}
+              onChange={(e) => setTwilioAuthToken(e.target.value)}
               style={{ width: "100%" }}
             />
             {createError && (
@@ -285,6 +343,50 @@ export default function AdminTenants() {
                       {t.twilioWhatsappNumber ? `WhatsApp: ${stripWhatsappPrefix(t.twilioWhatsappNumber)}` : "No WhatsApp number assigned"}
                     </span>
                     <Button type="button" variant="text" size="small" onClick={() => startEditNumber(t)}>Edit</Button>
+                  </div>
+                )}
+
+                {editingTwilioId === t.id ? (
+                  <div className="mt-2 flex flex-col gap-2">
+                    <div className="flex flex-wrap items-center gap-2">
+                      <TextField
+                        label="Account SID"
+                        placeholder="ACxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxxx"
+                        value={editTwilioSid}
+                        onChange={(e) => setEditTwilioSid(e.target.value)}
+                        error={!!editTwilioError}
+                        style={{ minWidth: 240 }}
+                      />
+                      <TextField
+                        label="Auth Token"
+                        type="password"
+                        value={editTwilioToken}
+                        onChange={(e) => setEditTwilioToken(e.target.value)}
+                        error={!!editTwilioError}
+                        style={{ minWidth: 200 }}
+                      />
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <Button type="button" variant="filled" size="small" onClick={() => saveEditTwilio(t.id)}>Save</Button>
+                      <Button type="button" variant="text" size="small" onClick={() => setEditingTwilioId(null)}>Cancel</Button>
+                    </div>
+                    <p className="kw-body-small" style={{ color: "var(--color-on-surface-variant)" }}>
+                      Leave both blank and save to revert to the platform's default Twilio account.
+                    </p>
+                    {editTwilioError && (
+                      <p className="kw-body-small" style={{ color: "var(--color-error)" }}>
+                        {editTwilioError}
+                      </p>
+                    )}
+                  </div>
+                ) : (
+                  <div className="mt-2 flex items-center gap-3">
+                    <span className="kw-body-small" style={{ color: "var(--color-on-surface-variant)" }}>
+                      {t.hasCustomTwilioAuthToken
+                        ? `Own Twilio subaccount: ${t.twilioAccountSid}`
+                        : "Using the platform's default Twilio account"}
+                    </span>
+                    <Button type="button" variant="text" size="small" onClick={() => startEditTwilio(t)}>Edit</Button>
                   </div>
                 )}
               </Card>

@@ -5,6 +5,15 @@ export interface Tenant {
   name: string;
   subdomain: string;
   twilioWhatsappNumber: string | null;
+  /** The subaccount's Account SID, if this tenant has its own Twilio
+   * credentials - not a secret (Twilio numbers/SIDs appear in webhook
+   * payloads and logs anyway), so safe to return from the admin API. */
+  twilioAccountSid: string | null;
+  /** Whether a custom auth token is configured - the token itself is never
+   * returned by any API response, only this derived boolean, so the admin
+   * UI can show "custom credentials configured" without ever exposing the
+   * live secret back to the browser. */
+  hasCustomTwilioAuthToken: boolean;
   licenseExpiresAt: string | null;
   archivedAt: string | null;
   createdAt: string;
@@ -43,17 +52,26 @@ interface TenantRow {
   name: string;
   subdomain: string;
   twilio_whatsapp_number: string | null;
+  twilio_account_sid: string | null;
+  twilio_auth_token: string | null;
   license_expires_at: string | null;
   archived_at: string | null;
   created_at: string;
 }
 
+// mapRow is used everywhere, including responses returned to the browser -
+// twilio_auth_token deliberately never appears in its output. The one place
+// that needs the real token (the webhook, to validate/send as the tenant's
+// own subaccount) uses getTwilioCredentials() below instead, which never
+// serializes its result anywhere.
 function mapRow(row: TenantRow): Tenant {
   return {
     id: row.id,
     name: row.name,
     subdomain: row.subdomain,
     twilioWhatsappNumber: row.twilio_whatsapp_number,
+    twilioAccountSid: row.twilio_account_sid,
+    hasCustomTwilioAuthToken: !!row.twilio_auth_token,
     licenseExpiresAt: row.license_expires_at,
     archivedAt: row.archived_at,
     createdAt: row.created_at,
@@ -107,6 +125,35 @@ export async function getTenantByWhatsappNumber(
   return result.rows.length > 0 ? mapRow(result.rows[0]) : null;
 }
 
+export interface TwilioCredentials {
+  accountSid: string;
+  authToken: string;
+}
+
+/** Internal use only (the WhatsApp webhook) - never return this anywhere an
+ * HTTP response could expose authToken. Falls back to the platform's global
+ * TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN env vars when the tenant has no
+ * credentials of its own (the common case) or when tenantId is null (an
+ * unrecognized number, which can only ever have been signed with the
+ * global token anyway). */
+export async function getTwilioCredentials(tenantId: string | null): Promise<TwilioCredentials> {
+  const globalCredentials: TwilioCredentials = {
+    accountSid: process.env.TWILIO_ACCOUNT_SID || "",
+    authToken: process.env.TWILIO_AUTH_TOKEN || "",
+  };
+  if (!tenantId) return globalCredentials;
+
+  const result = await pool.query<Pick<TenantRow, "twilio_account_sid" | "twilio_auth_token">>(
+    "SELECT twilio_account_sid, twilio_auth_token FROM tenants WHERE id = $1",
+    [tenantId]
+  );
+  const row = result.rows[0];
+  if (row?.twilio_account_sid && row?.twilio_auth_token) {
+    return { accountSid: row.twilio_account_sid, authToken: row.twilio_auth_token };
+  }
+  return globalCredentials;
+}
+
 export async function listTenants(): Promise<Tenant[]> {
   const result = await pool.query<TenantRow>(
     "SELECT * FROM tenants WHERE archived_at IS NULL ORDER BY name ASC"
@@ -120,12 +167,22 @@ export async function createTenant(input: {
   subdomain: string;
   licenseExpiresAt: string | null;
   twilioWhatsappNumber?: string | null;
+  twilioAccountSid?: string | null;
+  twilioAuthToken?: string | null;
 }): Promise<Tenant> {
   const result = await pool.query<TenantRow>(
-    `INSERT INTO tenants (id, name, subdomain, license_expires_at, twilio_whatsapp_number)
-     VALUES ($1, $2, $3, $4, $5)
+    `INSERT INTO tenants (id, name, subdomain, license_expires_at, twilio_whatsapp_number, twilio_account_sid, twilio_auth_token)
+     VALUES ($1, $2, $3, $4, $5, $6, $7)
      RETURNING *`,
-    [input.id, input.name, input.subdomain, input.licenseExpiresAt, input.twilioWhatsappNumber ?? null]
+    [
+      input.id,
+      input.name,
+      input.subdomain,
+      input.licenseExpiresAt,
+      input.twilioWhatsappNumber ?? null,
+      input.twilioAccountSid ?? null,
+      input.twilioAuthToken ?? null,
+    ]
   );
   return mapRow(result.rows[0]);
 }
@@ -152,6 +209,23 @@ export async function updateTenantWhatsappNumber(
   const result = await pool.query<TenantRow>(
     `UPDATE tenants SET twilio_whatsapp_number = $2 WHERE id = $1 AND archived_at IS NULL RETURNING *`,
     [id, twilioWhatsappNumber]
+  );
+  if (result.rows.length === 0) throw new TenantNotFoundError(id);
+  return mapRow(result.rows[0]);
+}
+
+/** Both null clears back to "use the platform's global Twilio account";
+ * both-or-neither is enforced by the caller (the route handler), since a
+ * lone Account SID with no Auth Token (or vice versa) can't validate or
+ * send anything. */
+export async function updateTenantTwilioCredentials(
+  id: string,
+  accountSid: string | null,
+  authToken: string | null
+): Promise<Tenant> {
+  const result = await pool.query<TenantRow>(
+    `UPDATE tenants SET twilio_account_sid = $2, twilio_auth_token = $3 WHERE id = $1 AND archived_at IS NULL RETURNING *`,
+    [id, accountSid, authToken]
   );
   if (result.rows.length === 0) throw new TenantNotFoundError(id);
   return mapRow(result.rows[0]);

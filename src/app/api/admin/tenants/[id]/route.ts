@@ -3,6 +3,7 @@ import { isAdminSession } from "@/lib/adminAuth";
 import {
   updateTenantLicense,
   updateTenantWhatsappNumber,
+  updateTenantTwilioCredentials,
   TenantNotFoundError,
   DefaultTenantProtectedError,
 } from "@/lib/tenants";
@@ -21,11 +22,16 @@ export async function PATCH(
   const { id } = await params;
 
   try {
-    const { licenseExpiresAt, whatsappNumber } = await req.json();
+    const { licenseExpiresAt, whatsappNumber, twilioAccountSid, twilioAuthToken } = await req.json();
 
-    if (licenseExpiresAt === undefined && whatsappNumber === undefined) {
+    if (
+      licenseExpiresAt === undefined &&
+      whatsappNumber === undefined &&
+      twilioAccountSid === undefined &&
+      twilioAuthToken === undefined
+    ) {
       return NextResponse.json(
-        { error: "licenseExpiresAt or whatsappNumber is required" },
+        { error: "licenseExpiresAt, whatsappNumber, or twilioAccountSid/twilioAuthToken is required" },
         { status: 400 }
       );
     }
@@ -47,6 +53,18 @@ export async function PATCH(
       }
       const normalized = whatsappNumber ? `whatsapp:${String(whatsappNumber).trim()}` : null;
       tenant = await updateTenantWhatsappNumber(id, normalized);
+    }
+
+    if (twilioAccountSid !== undefined || twilioAuthToken !== undefined) {
+      const sid = twilioAccountSid ? String(twilioAccountSid).trim() : null;
+      const token = twilioAuthToken ? String(twilioAuthToken).trim() : null;
+      if ((sid && !token) || (!sid && token)) {
+        return NextResponse.json(
+          { error: "twilioAccountSid and twilioAuthToken must be provided together (or both cleared)" },
+          { status: 400 }
+        );
+      }
+      tenant = await updateTenantTwilioCredentials(id, sid, token);
     }
 
     return NextResponse.json({ tenant });

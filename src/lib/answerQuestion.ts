@@ -46,15 +46,20 @@ const COMPOSE_ANSWER_TOOL: Anthropic.Tool = {
       detailed_answer: {
         type: "string",
         description:
-          "The full written answer with inline citations like [1], [2] matching the numbered context blocks. This is shown as text.",
+          "The full written answer with inline citations like [1], [2] matching the numbered context blocks. This is shown as text. Lead with a crisp, direct answer in the first 1-2 sentences, then give supporting detail and steps.",
       },
       voice_summary: {
         type: "string",
         description:
           "A short 1-2 sentence plain-language summary of the same answer, written to be read aloud. No citations, no markdown, no bracketed numbers.",
       },
+      used_outside_knowledge: {
+        type: "boolean",
+        description:
+          "true if answering fully required adding any specific fact, recommendation, or detail not explicitly present in the numbered context blocks (including your own general/pretrained knowledge of the topic); false if the answer is drawn entirely from what's in the provided context. Judge this honestly per-answer, independent of how strong the context match seemed.",
+      },
     },
-    required: ["detailed_answer", "voice_summary"],
+    required: ["detailed_answer", "voice_summary", "used_outside_knowledge"],
   },
 };
 
@@ -108,7 +113,7 @@ export async function answerQuestion(question: string, tenantId: string): Promis
     )
     .join("\n\n---\n\n");
 
-  const systemPrompt = `You are an agronomy advisor answering questions from farmers and agriculturists. Answer using ONLY the knowledge base context provided below — do not use outside knowledge. Cite sources inline using bracketed numbers like [1], [2] matching the numbered context blocks, in the detailed_answer only. Give the answer directly, with no commentary on your sources or their scope. Keep the answer practical, concrete, and easy to act on.
+  const systemPrompt = `You are an agronomy advisor answering questions from farmers and agriculturists. Answer using the context provided below as your primary source. Cite it inline using bracketed numbers like [1], [2] matching the numbered context blocks, in the detailed_answer only — the bracketed citation is the only reference to a source you should ever make. Never describe, name, or allude to the source, document, or knowledge base in prose (no phrases like "on record", "documented case", "the knowledge base shows", "Homegrown has resolved this before", "this falls outside what I can guide from"). Never state or imply your own confidence, certainty, or how reliable the answer is (e.g. do not say "confident recommendation", "you can proceed with confidence", "this is a resolved case") — that is shown separately in the UI, not part of the answer text. Lead with a crisp, direct answer to the farmer's actual question in the first 1-2 sentences, then follow with supporting detail and steps. Keep the answer practical, concrete, and easy to act on.
 
 ${mode.promptGuidance}
 
@@ -134,9 +139,22 @@ ${contextBlock}`;
   const toolUse = message.content.find(
     (b): b is Anthropic.ToolUseBlock => b.type === "tool_use"
   );
-  const input = toolUse?.input as { detailed_answer?: string; voice_summary?: string } | undefined;
+  const input = toolUse?.input as
+    | { detailed_answer?: string; voice_summary?: string; used_outside_knowledge?: boolean }
+    | undefined;
   const answerText = input?.detailed_answer || "";
   const voiceSummary = input?.voice_summary || answerText.slice(0, 200);
+
+  // classifySource() only measures retrieval similarity, decided before the
+  // model ever answers - it doesn't know whether the model actually stayed
+  // grounded in that context or filled gaps with its own general knowledge.
+  // A strong-similarity match can still produce an answer that goes well
+  // beyond what the retrieved chunks say. Downgrading post-hoc, based on
+  // the model's own report, means "Confident recommendation" only applies
+  // when the answer is genuinely drawn from the tenant's own KB content.
+  const usedOutsideKnowledge = input?.used_outside_knowledge === true;
+  const effectiveSource: SourceClass = source === "KB_GROUNDED" && usedOutsideKnowledge ? "WEAK_MATCH" : source;
+  const effectiveMode = effectiveSource === source ? mode : getAnswerMode(effectiveSource, criticality.label);
 
   const citedIndices = new Set(
     [...answerText.matchAll(/\[(\d+)\]/g)].map((m) => parseInt(m[1], 10))
@@ -160,13 +178,13 @@ ${contextBlock}`;
     voiceSummary,
     citations,
     truncated: message.stop_reason === "max_tokens",
-    confidenceLabel: mode.confidenceLabel,
+    confidenceLabel: effectiveMode.confidenceLabel,
     classification: {
-      source,
+      source: effectiveSource,
       criticality: criticality.label,
       criticalityScore: criticality.score,
       reasoning: criticality.reasoning,
     },
-    escalation: { show: mode.showEscalation },
+    escalation: { show: effectiveMode.showEscalation },
   };
 }
