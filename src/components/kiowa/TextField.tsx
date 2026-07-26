@@ -31,12 +31,19 @@ export function TextField({
   error = false,
   disabled = false,
   type = "text",
+  autoFocus = false,
   onChange,
   style,
   ...rest
 }: TextFieldProps) {
-  const [focused, setFocused] = useState(false);
+  // Initialized from autoFocus directly, rather than detected from the DOM
+  // after mount: a native autoFocus input's own browser-driven focus can
+  // land before or after an effect runs (a real, observed race), so instead
+  // of racing it, just start in the state we already know the field will be
+  // in.
+  const [focused, setFocused] = useState(autoFocus);
   const [internal, setInternal] = useState(value || "");
+
   const val = value !== undefined ? value : internal;
   const filled = String(val).length > 0;
   // Date/time/etc. inputs render their own always-visible native
@@ -91,6 +98,7 @@ export function TextField({
             value={val}
             placeholder={floated ? placeholder : ""}
             disabled={disabled}
+            autoFocus={autoFocus}
             onFocus={() => setFocused(true)}
             onBlur={() => setFocused(false)}
             onChange={(e) => { setInternal(e.target.value); onChange?.(e); }}
