@@ -44,19 +44,25 @@ create table if not exists tenants (
   twilio_whatsapp_number text unique,
   license_expires_at timestamptz,
   archived_at timestamptz,
-  created_at timestamptz not null default now(),
-  -- A tenant's WhatsApp number can live on its own Twilio subaccount
-  -- (distinct Account SID + Auth Token from the platform's main account) -
-  -- Twilio signs webhook requests and requires sending using the
-  -- credentials of whichever account actually owns the number. Both null
-  -- (the common case) means "use the platform's global TWILIO_ACCOUNT_SID/
-  -- TWILIO_AUTH_TOKEN env vars"; both set means "use this tenant's own".
-  -- Enforced as both-or-neither at the application layer, not here.
-  -- twilio_auth_token is never returned by any API response - see
-  -- src/lib/tenants.ts.
-  twilio_account_sid text,
-  twilio_auth_token text
+  created_at timestamptz not null default now()
 );
+
+-- create table if not exists is a no-op once the table already exists, so
+-- columns added after the table's initial creation need their own explicit
+-- ALTER TABLE - putting them in the CREATE TABLE block above would silently
+-- never apply to an already-existing tenants table (confirmed the hard way:
+-- shipped code assuming these columns existed before this line was added).
+--
+-- A tenant's WhatsApp number can live on its own Twilio subaccount (distinct
+-- Account SID + Auth Token from the platform's main account) - Twilio signs
+-- webhook requests and requires sending using the credentials of whichever
+-- account actually owns the number. Both null (the common case) means "use
+-- the platform's global TWILIO_ACCOUNT_SID/TWILIO_AUTH_TOKEN env vars";
+-- both set means "use this tenant's own". Enforced as both-or-neither at
+-- the application layer, not here. twilio_auth_token is never returned by
+-- any API response - see src/lib/tenants.ts.
+alter table tenants add column if not exists twilio_account_sid text;
+alter table tenants add column if not exists twilio_auth_token text;
 
 insert into tenants (id, name, subdomain)
 values ('default', 'UAT', 'default')
