@@ -119,6 +119,29 @@ describe("tenant CRUD", () => {
     expect(numberBody.tenant.licenseExpiresAt).toBeTruthy(); // unaffected by the number-only patch
   });
 
+  it("PATCHes answerConfigMd and clears it back to null", async () => {
+    const { id, cookie } = await createTestTenant("config");
+    const config = "Keep answers under 3 sentences. Never mention pruning unless asked.";
+
+    const setRes = await fetch(`${baseUrl()}/api/admin/tenants/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({ answerConfigMd: config }),
+    });
+    expect(setRes.status).toBe(200);
+    const setBody = await setRes.json();
+    expect(setBody.tenant.answerConfigMd).toBe(config);
+
+    const clearRes = await fetch(`${baseUrl()}/api/admin/tenants/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({ answerConfigMd: null }),
+    });
+    expect(clearRes.status).toBe(200);
+    const clearBody = await clearRes.json();
+    expect(clearBody.tenant.answerConfigMd).toBeNull();
+  });
+
   it("tenant list includes rootDomain", async () => {
     const cookie = await getAdminSessionCookie();
     const res = await fetch(`${baseUrl()}/api/admin/tenants`, { headers: { Cookie: cookie } });

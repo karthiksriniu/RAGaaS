@@ -14,6 +14,11 @@ export interface Tenant {
    * UI can show "custom credentials configured" without ever exposing the
    * live secret back to the browser. */
   hasCustomTwilioAuthToken: boolean;
+  /** Freeform admin-authored guidance blended into the system prompt for
+   * this tenant's answers (tone/format + how to weigh its KB content).
+   * Not a secret, safe to return from the admin API unlike the Twilio
+   * auth token above. */
+  answerConfigMd: string | null;
   licenseExpiresAt: string | null;
   archivedAt: string | null;
   createdAt: string;
@@ -54,6 +59,7 @@ interface TenantRow {
   twilio_whatsapp_number: string | null;
   twilio_account_sid: string | null;
   twilio_auth_token: string | null;
+  answer_config_md: string | null;
   license_expires_at: string | null;
   archived_at: string | null;
   created_at: string;
@@ -72,6 +78,7 @@ function mapRow(row: TenantRow): Tenant {
     twilioWhatsappNumber: row.twilio_whatsapp_number,
     twilioAccountSid: row.twilio_account_sid,
     hasCustomTwilioAuthToken: !!row.twilio_auth_token,
+    answerConfigMd: row.answer_config_md,
     licenseExpiresAt: row.license_expires_at,
     archivedAt: row.archived_at,
     createdAt: row.created_at,
@@ -154,6 +161,17 @@ export async function getTwilioCredentials(tenantId: string | null): Promise<Twi
   return globalCredentials;
 }
 
+/** A small standalone query (mirrors getTwilioCredentials's shape) so
+ * answerQuestion.ts fetches only this one field rather than the full
+ * tenant row on every question. */
+export async function getTenantAnswerConfig(tenantId: string): Promise<string | null> {
+  const result = await pool.query<Pick<TenantRow, "answer_config_md">>(
+    "SELECT answer_config_md FROM tenants WHERE id = $1",
+    [tenantId]
+  );
+  return result.rows[0]?.answer_config_md ?? null;
+}
+
 export async function listTenants(): Promise<Tenant[]> {
   const result = await pool.query<TenantRow>(
     "SELECT * FROM tenants WHERE archived_at IS NULL ORDER BY name ASC"
@@ -169,10 +187,11 @@ export async function createTenant(input: {
   twilioWhatsappNumber?: string | null;
   twilioAccountSid?: string | null;
   twilioAuthToken?: string | null;
+  answerConfigMd?: string | null;
 }): Promise<Tenant> {
   const result = await pool.query<TenantRow>(
-    `INSERT INTO tenants (id, name, subdomain, license_expires_at, twilio_whatsapp_number, twilio_account_sid, twilio_auth_token)
-     VALUES ($1, $2, $3, $4, $5, $6, $7)
+    `INSERT INTO tenants (id, name, subdomain, license_expires_at, twilio_whatsapp_number, twilio_account_sid, twilio_auth_token, answer_config_md)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
      RETURNING *`,
     [
       input.id,
@@ -182,6 +201,7 @@ export async function createTenant(input: {
       input.twilioWhatsappNumber ?? null,
       input.twilioAccountSid ?? null,
       input.twilioAuthToken ?? null,
+      input.answerConfigMd ?? null,
     ]
   );
   return mapRow(result.rows[0]);
@@ -209,6 +229,18 @@ export async function updateTenantWhatsappNumber(
   const result = await pool.query<TenantRow>(
     `UPDATE tenants SET twilio_whatsapp_number = $2 WHERE id = $1 AND archived_at IS NULL RETURNING *`,
     [id, twilioWhatsappNumber]
+  );
+  if (result.rows.length === 0) throw new TenantNotFoundError(id);
+  return mapRow(result.rows[0]);
+}
+
+export async function updateTenantAnswerConfig(
+  id: string,
+  answerConfigMd: string | null
+): Promise<Tenant> {
+  const result = await pool.query<TenantRow>(
+    `UPDATE tenants SET answer_config_md = $2 WHERE id = $1 AND archived_at IS NULL RETURNING *`,
+    [id, answerConfigMd]
   );
   if (result.rows.length === 0) throw new TenantNotFoundError(id);
   return mapRow(result.rows[0]);

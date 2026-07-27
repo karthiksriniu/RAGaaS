@@ -64,6 +64,13 @@ create table if not exists tenants (
 alter table tenants add column if not exists twilio_account_sid text;
 alter table tenants add column if not exists twilio_auth_token text;
 
+-- Freeform admin-authored guidance blended into the system prompt for this
+-- tenant's answers - answer tone/format preferences and how to weigh this
+-- tenant's KB content. Null means "use the platform's default tone only".
+-- Not sensitive (admin-authored, not a secret), safe to return from API
+-- responses unlike twilio_auth_token above.
+alter table tenants add column if not exists answer_config_md text;
+
 insert into tenants (id, name, subdomain)
 values ('default', 'UAT', 'default')
 on conflict (id) do nothing;

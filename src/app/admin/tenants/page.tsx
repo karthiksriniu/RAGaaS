@@ -5,6 +5,7 @@ import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/kiowa/Button";
 import { TextField } from "@/components/kiowa/TextField";
+import { Textarea } from "@/components/kiowa/Textarea";
 import { Card } from "@/components/kiowa/Card";
 import { StatusPill } from "@/components/kiowa/StatusPill";
 import { Logo } from "@/components/Logo";
@@ -16,6 +17,7 @@ interface Tenant {
   twilioWhatsappNumber: string | null;
   twilioAccountSid: string | null;
   hasCustomTwilioAuthToken: boolean;
+  answerConfigMd: string | null;
   licenseExpiresAt: string | null;
   archivedAt: string | null;
   createdAt: string;
@@ -54,6 +56,7 @@ export default function AdminTenants() {
   const [whatsappNumber, setWhatsappNumber] = useState("");
   const [twilioAccountSid, setTwilioAccountSid] = useState("");
   const [twilioAuthToken, setTwilioAuthToken] = useState("");
+  const [answerConfigMd, setAnswerConfigMd] = useState("");
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState<string | null>(null);
   const [editingLicenseId, setEditingLicenseId] = useState<string | null>(null);
@@ -65,6 +68,8 @@ export default function AdminTenants() {
   const [editTwilioSid, setEditTwilioSid] = useState("");
   const [editTwilioToken, setEditTwilioToken] = useState("");
   const [editTwilioError, setEditTwilioError] = useState<string | null>(null);
+  const [editingConfigId, setEditingConfigId] = useState<string | null>(null);
+  const [editConfigMd, setEditConfigMd] = useState("");
   const router = useRouter();
 
   async function refresh() {
@@ -98,6 +103,7 @@ export default function AdminTenants() {
           whatsappNumber: whatsappNumber.trim() || null,
           twilioAccountSid: twilioAccountSid.trim() || null,
           twilioAuthToken: twilioAuthToken.trim() || null,
+          answerConfigMd: answerConfigMd.trim() || null,
         }),
       });
       const data = await res.json();
@@ -108,6 +114,7 @@ export default function AdminTenants() {
       setWhatsappNumber("");
       setTwilioAccountSid("");
       setTwilioAuthToken("");
+      setAnswerConfigMd("");
       await refresh();
     } catch (err) {
       setCreateError(err instanceof Error ? err.message : String(err));
@@ -189,6 +196,21 @@ export default function AdminTenants() {
     await refresh();
   }
 
+  function startEditConfig(tenant: Tenant) {
+    setEditingConfigId(tenant.id);
+    setEditConfigMd(tenant.answerConfigMd || "");
+  }
+
+  async function saveEditConfig(id: string) {
+    await fetch(`/api/admin/tenants/${encodeURIComponent(id)}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ answerConfigMd: editConfigMd.trim() || null }),
+    });
+    setEditingConfigId(null);
+    await refresh();
+  }
+
   return (
     <div className="min-h-screen" style={{ background: "var(--color-surface)", color: "var(--color-on-surface)" }}>
       <header
@@ -252,6 +274,14 @@ export default function AdminTenants() {
               type="password"
               value={twilioAuthToken}
               onChange={(e) => setTwilioAuthToken(e.target.value)}
+              style={{ width: "100%" }}
+            />
+            <Textarea
+              label="Answer style & KB guidance (optional, can be added later)"
+              placeholder="How should this business's answers read? e.g. crisp and single-topic vs. conversational, summary-first vs. detailed-first, how to weigh this KB's content..."
+              rows={6}
+              value={answerConfigMd}
+              onChange={(e) => setAnswerConfigMd(e.target.value)}
               style={{ width: "100%" }}
             />
             {createError && (
@@ -387,6 +417,33 @@ export default function AdminTenants() {
                         : "Using the platform's default Twilio account"}
                     </span>
                     <Button type="button" variant="text" size="small" onClick={() => startEditTwilio(t)}>Edit</Button>
+                  </div>
+                )}
+
+                {editingConfigId === t.id ? (
+                  <div className="mt-2 flex flex-col gap-2">
+                    <Textarea
+                      rows={8}
+                      placeholder="How should this business's answers read? e.g. crisp and single-topic vs. conversational, summary-first vs. detailed-first, how to weigh this KB's content..."
+                      value={editConfigMd}
+                      onChange={(e) => setEditConfigMd(e.target.value)}
+                    />
+                    <div className="flex items-center gap-2">
+                      <Button type="button" variant="filled" size="small" onClick={() => saveEditConfig(t.id)}>Save</Button>
+                      <Button type="button" variant="text" size="small" onClick={() => setEditingConfigId(null)}>Cancel</Button>
+                    </div>
+                    <p className="kw-body-small" style={{ color: "var(--color-on-surface-variant)" }}>
+                      Leave blank and save to revert to the platform's default answer tone.
+                    </p>
+                  </div>
+                ) : (
+                  <div className="mt-2 flex items-center gap-3">
+                    <span className="kw-body-small" style={{ color: "var(--color-on-surface-variant)" }}>
+                      {t.answerConfigMd
+                        ? `Answer style configured (${t.answerConfigMd.length} chars)`
+                        : "Answer style: using the platform's default tone"}
+                    </span>
+                    <Button type="button" variant="text" size="small" onClick={() => startEditConfig(t)}>Edit</Button>
                   </div>
                 )}
               </Card>

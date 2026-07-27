@@ -4,6 +4,7 @@ import {
   updateTenantLicense,
   updateTenantWhatsappNumber,
   updateTenantTwilioCredentials,
+  updateTenantAnswerConfig,
   TenantNotFoundError,
   DefaultTenantProtectedError,
 } from "@/lib/tenants";
@@ -22,16 +23,17 @@ export async function PATCH(
   const { id } = await params;
 
   try {
-    const { licenseExpiresAt, whatsappNumber, twilioAccountSid, twilioAuthToken } = await req.json();
+    const { licenseExpiresAt, whatsappNumber, twilioAccountSid, twilioAuthToken, answerConfigMd } = await req.json();
 
     if (
       licenseExpiresAt === undefined &&
       whatsappNumber === undefined &&
       twilioAccountSid === undefined &&
-      twilioAuthToken === undefined
+      twilioAuthToken === undefined &&
+      answerConfigMd === undefined
     ) {
       return NextResponse.json(
-        { error: "licenseExpiresAt, whatsappNumber, or twilioAccountSid/twilioAuthToken is required" },
+        { error: "licenseExpiresAt, whatsappNumber, twilioAccountSid/twilioAuthToken, or answerConfigMd is required" },
         { status: 400 }
       );
     }
@@ -65,6 +67,11 @@ export async function PATCH(
         );
       }
       tenant = await updateTenantTwilioCredentials(id, sid, token);
+    }
+
+    if (answerConfigMd !== undefined) {
+      const md = typeof answerConfigMd === "string" ? answerConfigMd.trim() || null : null;
+      tenant = await updateTenantAnswerConfig(id, md);
     }
 
     return NextResponse.json({ tenant });

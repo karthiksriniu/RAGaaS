@@ -3,6 +3,8 @@ import { embedTexts } from "@/lib/embeddings";
 import { withTenant } from "@/lib/db";
 import { classifyCriticality } from "@/lib/classify";
 import { classifySource, getAnswerMode, SourceClass, Criticality } from "@/lib/answerMode";
+import { getTenantAnswerConfig } from "@/lib/tenants";
+import { buildSystemPrompt } from "@/lib/systemPrompt";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
@@ -66,9 +68,10 @@ const COMPOSE_ANSWER_TOOL: Anthropic.Tool = {
 export async function answerQuestion(question: string, tenantId: string): Promise<AnswerResult> {
   if (!tenantId) throw new Error("answerQuestion: tenantId is required");
 
-  const [[queryEmbedding], criticality] = await Promise.all([
+  const [[queryEmbedding], criticality, tenantConfigMd] = await Promise.all([
     embedTexts([question], "query"),
     classifyCriticality(question),
+    getTenantAnswerConfig(tenantId),
   ]);
   const embeddingLiteral = `[${queryEmbedding.join(",")}]`;
 
@@ -113,12 +116,7 @@ export async function answerQuestion(question: string, tenantId: string): Promis
     )
     .join("\n\n---\n\n");
 
-  const systemPrompt = `You are an agronomy advisor answering questions from farmers and agriculturists. Answer using the context provided below as your primary source. Cite it inline using bracketed numbers like [1], [2] matching the numbered context blocks, in the detailed_answer only — the bracketed citation is the only reference to a source you should ever make. Never describe, name, or allude to the source, document, or knowledge base in prose (no phrases like "on record", "documented case", "the knowledge base shows", "Homegrown has resolved this before", "this falls outside what I can guide from"). Never state or imply your own confidence, certainty, or how reliable the answer is (e.g. do not say "confident recommendation", "you can proceed with confidence", "this is a resolved case") — that is shown separately in the UI, not part of the answer text. Lead with a crisp, direct answer to the farmer's actual question in the first 1-2 sentences, then follow with supporting detail and steps. Keep the answer practical, concrete, and easy to act on.
-
-${mode.promptGuidance}
-
-Knowledge base context:
-${contextBlock}`;
+  const systemPrompt = buildSystemPrompt(mode, contextBlock, tenantConfigMd);
 
   const message = await anthropic.messages.create({
     model: "claude-sonnet-5",
