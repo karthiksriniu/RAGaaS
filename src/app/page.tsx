@@ -3,6 +3,7 @@ import ChatClient from "./ChatClient";
 import { getTenant } from "@/lib/tenants";
 import { Card } from "@/components/kiowa/Card";
 import { Logo } from "@/components/Logo";
+import { MarketingSite } from "@/components/MarketingSite";
 
 // This page's content depends entirely on the request's Host header (which
 // tenant, or no tenant at all) - it must never be statically cached or
@@ -37,7 +38,10 @@ function TenantExpiredLanding() {
 }
 
 export default async function Home() {
-  const tenantSlug = (await headers()).get("x-tenant-slug") || "";
+  const requestHeaders = await headers();
+  if (requestHeaders.get("x-is-root-domain") === "true") return <MarketingSite />;
+
+  const tenantSlug = requestHeaders.get("x-tenant-slug") || "";
   if (!tenantSlug) return <NoTenantLanding />;
 
   const tenant = await getTenant(tenantSlug);
