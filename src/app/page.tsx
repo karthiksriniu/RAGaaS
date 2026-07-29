@@ -1,8 +1,10 @@
 import { headers } from "next/headers";
 import ChatClient from "./ChatClient";
 import { getTenant } from "@/lib/tenants";
+import { isRootDomainHost } from "@/lib/tenantHost";
 import { Card } from "@/components/kiowa/Card";
 import { Logo } from "@/components/Logo";
+import { MarketingSite } from "@/components/MarketingSite";
 
 // This page's content depends entirely on the request's Host header (which
 // tenant, or no tenant at all) - it must never be statically cached or
@@ -37,7 +39,11 @@ function TenantExpiredLanding() {
 }
 
 export default async function Home() {
-  const tenantSlug = (await headers()).get("x-tenant-slug") || "";
+  const requestHeaders = await headers();
+  const host = (requestHeaders.get("host") || "").split(":")[0];
+  if (isRootDomainHost(host)) return <MarketingSite />;
+
+  const tenantSlug = requestHeaders.get("x-tenant-slug") || "";
   if (!tenantSlug) return <NoTenantLanding />;
 
   const tenant = await getTenant(tenantSlug);

@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { resolveTenantSlug } from "../tenantHost";
+import { resolveTenantSlug, isRootDomainHost } from "../tenantHost";
 
 const ORIGINAL_ENV = { ...process.env };
 
@@ -72,5 +72,39 @@ describe("resolveTenantSlug", () => {
     vi.stubEnv("NODE_ENV", "production");
     expect(resolveTenantSlug("localhost")).toBe("");
     vi.unstubAllEnvs();
+  });
+});
+
+describe("isRootDomainHost", () => {
+  beforeEach(resetEnv);
+  afterEach(resetEnv);
+
+  it("is true for the bare apex domain", () => {
+    process.env.TENANT_ROOT_DOMAIN = "mybizcare.com";
+    expect(isRootDomainHost("mybizcare.com")).toBe(true);
+  });
+
+  it("is true for www", () => {
+    process.env.TENANT_ROOT_DOMAIN = "mybizcare.com";
+    expect(isRootDomainHost("www.mybizcare.com")).toBe(true);
+  });
+
+  it("is false for a real tenant subdomain, even though resolveTenantSlug and this both treat unknowns as non-root", () => {
+    process.env.TENANT_ROOT_DOMAIN = "mybizcare.com";
+    expect(isRootDomainHost("acme.mybizcare.com")).toBe(false);
+  });
+
+  it("is false for an unrecognized/typo'd subdomain - that case still gets the generic no-tenant landing page, not the marketing site", () => {
+    process.env.TENANT_ROOT_DOMAIN = "mybizcare.com";
+    expect(isRootDomainHost("typo.mybizcare.com")).toBe(false);
+  });
+
+  it("is false for a totally unrelated host", () => {
+    process.env.TENANT_ROOT_DOMAIN = "mybizcare.com";
+    expect(isRootDomainHost("example.com")).toBe(false);
+  });
+
+  it("is false when TENANT_ROOT_DOMAIN is unset entirely", () => {
+    expect(isRootDomainHost("mybizcare.com")).toBe(false);
   });
 });

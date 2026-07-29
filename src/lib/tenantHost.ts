@@ -28,3 +28,15 @@ export function resolveTenantSlug(host: string): string {
 
   return "";
 }
+
+/** True only for the bare apex or www of TENANT_ROOT_DOMAIN - distinct from
+ * resolveTenantSlug()'s "" result, which also covers unrecognized/typo'd
+ * subdomains and unrelated hosts. Used to show the public marketing site at
+ * the root domain instead of the generic "not linked to a business" landing
+ * page, without changing resolveTenantSlug's existing tenant-resolution
+ * contract (still "" for both cases, unit-tested above). */
+export function isRootDomainHost(host: string): boolean {
+  const rootDomain = process.env.TENANT_ROOT_DOMAIN;
+  if (!rootDomain) return false;
+  return host === rootDomain || host === `www.${rootDomain}`;
+}
