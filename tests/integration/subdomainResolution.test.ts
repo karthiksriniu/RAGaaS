@@ -19,7 +19,7 @@ describe("subdomain resolution", () => {
   it("a real tenant subdomain renders the chat UI", async () => {
     const { subdomain } = await createTestTenant("subres-real");
     const html = await fetchAsHost(`${subdomain}.${rootDomain}`);
-    expect(html).toContain("AgriAdvisor");
+    expect(html).toContain("MyBizCare");
     expect(html).not.toContain("linked to a business");
   });
 
@@ -49,7 +49,7 @@ describe("subdomain resolution", () => {
 
   it("the legacy .vercel.app host resolves to the default tenant", async () => {
     const html = await fetchAsHost("agriadvisor-poc-staging.vercel.app");
-    expect(html).toContain("AgriAdvisor");
+    expect(html).toContain("MyBizCare");
     expect(html).not.toContain("linked to a business");
   });
 });

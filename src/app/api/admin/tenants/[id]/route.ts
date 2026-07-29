@@ -3,7 +3,10 @@ import { isAdminSession } from "@/lib/adminAuth";
 import {
   updateTenantLicense,
   updateTenantWhatsappNumber,
+  updateTenantTwilioCredentials,
+  updateTenantAnswerConfig,
   TenantNotFoundError,
+  DefaultTenantProtectedError,
 } from "@/lib/tenants";
 
 export const runtime = "nodejs";
@@ -20,11 +23,17 @@ export async function PATCH(
   const { id } = await params;
 
   try {
-    const { licenseExpiresAt, whatsappNumber } = await req.json();
+    const { licenseExpiresAt, whatsappNumber, twilioAccountSid, twilioAuthToken, answerConfigMd } = await req.json();
 
-    if (licenseExpiresAt === undefined && whatsappNumber === undefined) {
+    if (
+      licenseExpiresAt === undefined &&
+      whatsappNumber === undefined &&
+      twilioAccountSid === undefined &&
+      twilioAuthToken === undefined &&
+      answerConfigMd === undefined
+    ) {
       return NextResponse.json(
-        { error: "licenseExpiresAt or whatsappNumber is required" },
+        { error: "licenseExpiresAt, whatsappNumber, twilioAccountSid/twilioAuthToken, or answerConfigMd is required" },
         { status: 400 }
       );
     }
@@ -48,10 +57,30 @@ export async function PATCH(
       tenant = await updateTenantWhatsappNumber(id, normalized);
     }
 
+    if (twilioAccountSid !== undefined || twilioAuthToken !== undefined) {
+      const sid = twilioAccountSid ? String(twilioAccountSid).trim() : null;
+      const token = twilioAuthToken ? String(twilioAuthToken).trim() : null;
+      if ((sid && !token) || (!sid && token)) {
+        return NextResponse.json(
+          { error: "twilioAccountSid and twilioAuthToken must be provided together (or both cleared)" },
+          { status: 400 }
+        );
+      }
+      tenant = await updateTenantTwilioCredentials(id, sid, token);
+    }
+
+    if (answerConfigMd !== undefined) {
+      const md = typeof answerConfigMd === "string" ? answerConfigMd.trim() || null : null;
+      tenant = await updateTenantAnswerConfig(id, md);
+    }
+
     return NextResponse.json({ tenant });
   } catch (err) {
     if (err instanceof TenantNotFoundError) {
       return NextResponse.json({ error: err.message }, { status: 404 });
+    }
+    if (err instanceof DefaultTenantProtectedError) {
+      return NextResponse.json({ error: err.message }, { status: 400 });
     }
     const pgErr = err as { code?: string; constraint?: string };
     if (pgErr.code === "23505") {

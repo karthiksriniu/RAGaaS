@@ -1,0 +1,56 @@
+/* Kiowa Design System - semantic color aliases.
+   Copied verbatim from the synced Kiowa Design System (claude.ai/design).
+   Friendly names mapped onto the Material 3 scheme roles defined in
+   fig-tokens.css. Components reference THESE so a theme swap
+   (data-theme="dark"/.dark) flows through automatically.
+   Brand primary is a deep teal (#006874); tertiary a calm navy. */
+
+:root {
+  /* Brand ---------------------------------------------------- */
+  --color-primary: var(--schemes-primary);                       /* #006874 teal */
+  --color-on-primary: var(--schemes-on-primary);
+  --color-primary-container: var(--schemes-primary-container);   /* #9eeffd */
+  --color-on-primary-container: var(--schemes-on-primary-container);
+
+  --color-secondary: var(--schemes-secondary);
+  --color-on-secondary: var(--schemes-on-secondary);
+  --color-secondary-container: var(--schemes-secondary-container);
+  --color-on-secondary-container: var(--schemes-on-secondary-container);
+
+  --color-tertiary: var(--schemes-tertiary);                     /* #525e7d navy */
+  --color-on-tertiary: var(--schemes-on-tertiary);
+  --color-tertiary-container: var(--schemes-tertiary-container);
+  --color-on-tertiary-container: var(--schemes-on-tertiary-container);
+
+  /* Status --------------------------------------------------- */
+  --color-error: var(--schemes-error);
+  --color-on-error: var(--schemes-on-error);
+  --color-error-container: var(--schemes-error-container);
+  --color-on-error-container: var(--schemes-on-error-container);
+
+  /* Surfaces ------------------------------------------------- */
+  --color-background: var(--schemes-background);
+  --color-on-background: var(--schemes-on-background);
+  --color-surface: var(--schemes-surface);
+  --color-on-surface: var(--schemes-on-surface);
+  --color-surface-variant: var(--schemes-surface-variant);
+  --color-on-surface-variant: var(--schemes-on-surface-variant);
+
+  --color-surface-dim: var(--schemes-surface-dim);
+  --color-surface-bright: var(--schemes-surface-bright);
+  --color-surface-container-lowest: var(--schemes-surface-container-lowest);
+  --color-surface-container-low: var(--schemes-surface-container-low);
+  --color-surface-container: var(--schemes-surface-container);
+  --color-surface-container-high: var(--schemes-surface-container-high);
+  --color-surface-container-highest: var(--schemes-surface-container-highest);
+
+  /* Outlines & misc ----------------------------------------- */
+  --color-outline: var(--schemes-outline);
+  --color-outline-variant: var(--schemes-outline-variant);
+  --color-scrim: var(--schemes-scrim);
+  --color-shadow: var(--schemes-shadow);
+  --color-inverse-surface: var(--schemes-inverse-surface);
+  --color-inverse-on-surface: var(--schemes-inverse-on-surface);
+  --color-inverse-primary: var(--schemes-inverse-primary);
+  --color-surface-tint: var(--schemes-surface-tint);
+}

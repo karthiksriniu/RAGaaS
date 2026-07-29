@@ -80,5 +80,7 @@ describe("cross-tenant content isolation (real LLM calls - kept to 2 cases)", ()
     for (const citation of otherBody.citations || []) {
       expect(citation.source_uri).not.toContain("agronomy_kb");
     }
-  });
+  }, 90000); // the default 45s testTimeout was already marginal here (a 20s
+  // inline wait plus two real, ~10-15s Anthropic calls), and normal API
+  // latency variance pushed it over on occasion - not a logic bug.
 });

@@ -3,6 +3,14 @@
 import { useEffect, useRef, useState } from "react";
 import Link from "next/link";
 import { useRouter } from "next/navigation";
+import { Button } from "@/components/kiowa/Button";
+import { Select } from "@/components/kiowa/Select";
+import { Card } from "@/components/kiowa/Card";
+import { ListItem } from "@/components/kiowa/ListItem";
+import { IconButton } from "@/components/kiowa/IconButton";
+import { ProgressIndicator } from "@/components/kiowa/ProgressIndicator";
+import { StatusPill } from "@/components/kiowa/StatusPill";
+import { Logo } from "@/components/Logo";
 
 interface SourceRow {
   source_uri: string;
@@ -95,43 +103,58 @@ export default function AdminHome() {
     router.push("/admin/login");
   }
 
+  const tenantOptions = tenants.map((t) => ({ value: t.id, label: t.name }));
+
   return (
-    <div className="min-h-screen bg-neutral-50 text-neutral-900">
-      <header className="flex items-center justify-between border-b border-neutral-200 bg-white px-6 py-4">
-        <div className="flex items-center gap-2">
-          <h1 className="text-lg font-semibold text-green-800">AgriAdvisor admin</h1>
-          <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-xs font-medium text-neutral-500">
-            Knowledge sources
-          </span>
+    <div className="min-h-screen" style={{ background: "var(--color-surface)", color: "var(--color-on-surface)" }}>
+      <header
+        className="flex items-center justify-between px-6 py-4"
+        style={{ borderBottom: "1px solid var(--color-outline-variant)", background: "var(--color-surface-container-lowest)" }}
+      >
+        <div className="flex items-center gap-2.5">
+          <Logo size={28} />
+          <h1 className="kw-title-large" style={{ fontFamily: "var(--font-brand)", fontWeight: "var(--weight-bold)", color: "var(--color-primary)" }}>
+            MyBizCare admin
+          </h1>
+          <StatusPill label="Knowledge sources" tone="neutral" />
         </div>
-        <div className="flex items-center gap-4">
-          <Link href="/admin/tenants" className="text-sm text-neutral-500 hover:text-neutral-800">
-            Manage tenants
+        <div className="flex items-center gap-2">
+          <Link href="/admin/tenants">
+            <Button type="button" variant="text" icon="group">Manage tenants</Button>
           </Link>
-          <button onClick={handleLogout} className="text-sm text-neutral-500 hover:text-neutral-800">
-            Sign out
-          </button>
+          <Button type="button" variant="outlined" icon="logout" onClick={handleLogout}>Sign out</Button>
         </div>
       </header>
 
       <div className="mx-auto max-w-2xl px-6 py-8">
-        <label className="mb-2 block text-sm font-medium text-neutral-700">Tenant</label>
-        <select
+        <Select
+          label="Tenant"
           value={selectedTenantId}
-          onChange={(e) => setSelectedTenantId(e.target.value)}
-          className="mb-6 w-full rounded-lg border border-neutral-300 bg-white px-3 py-2 text-sm"
-        >
-          {tenants.length === 0 && <option value="">No tenants yet</option>}
-          {tenants.map((t) => (
-            <option key={t.id} value={t.id}>
-              {t.name}
-            </option>
-          ))}
-        </select>
+          options={tenantOptions.length ? tenantOptions : [{ value: "", label: "No tenants yet" }]}
+          onChange={setSelectedTenantId}
+          style={{ marginBottom: 24, width: "100%" }}
+        />
 
-        <label className="mb-2 block text-sm font-medium text-neutral-700">
+        <p className="kw-label-large mb-2" style={{ color: "var(--color-on-surface-variant)" }}>
           Upload a Word document (.docx)
-        </label>
+        </p>
+        <div className="flex items-center gap-3">
+          <Button
+            type="button"
+            variant="tonal"
+            icon="upload_file"
+            disabled={uploading || !selectedTenantId}
+            onClick={() => fileInputRef.current?.click()}
+          >
+            Choose file
+          </Button>
+          {uploading && (
+            <span className="flex items-center gap-2 kw-body-small" style={{ color: "var(--color-on-surface-variant)" }}>
+              <ProgressIndicator variant="circular" size={16} thickness={2} />
+              Ingesting document…
+            </span>
+          )}
+        </div>
         <input
           ref={fileInputRef}
           type="file"
@@ -141,34 +164,45 @@ export default function AdminHome() {
             if (file) handleUpload(file);
           }}
           disabled={uploading || !selectedTenantId}
-          className="mb-2 w-full text-sm"
+          className="hidden"
         />
-        {uploading && <p className="text-sm text-neutral-500">Ingesting document…</p>}
-        {uploadError && <p className="text-sm text-red-600">{uploadError}</p>}
+        {uploadError && (
+          <p className="kw-body-small mt-2" style={{ color: "var(--color-error)" }}>
+            {uploadError}
+          </p>
+        )}
 
-        <div className="mt-8">
-          <h2 className="mb-3 text-sm font-medium text-neutral-700">Ingested sources</h2>
+        <div className="mt-10">
+          <h2 className="kw-label-large mb-3" style={{ color: "var(--color-on-surface-variant)" }}>
+            Ingested sources
+          </h2>
           {sources.length === 0 && (
-            <p className="text-sm text-neutral-400">No sources ingested yet.</p>
+            <p className="kw-body-small" style={{ color: "var(--color-on-surface-variant)" }}>
+              No sources ingested yet.
+            </p>
           )}
-          <ul className="flex flex-col gap-2">
-            {sources.map((s) => (
-              <li
-                key={s.source_uri}
-                className="flex items-center justify-between rounded-lg border border-neutral-200 bg-white p-3 text-sm"
-              >
-                <div>
-                  <p className="font-medium">{s.source_uri}</p>
-                  <p className="text-xs text-neutral-400">
-                    {s.chunk_count} chunks · {s.source_type}
-                  </p>
+          {sources.length > 0 && (
+            <Card variant="outlined" padding={0}>
+              {sources.map((s, i) => (
+                <div key={s.source_uri} style={{ borderTop: i === 0 ? "none" : "1px solid var(--color-outline-variant)" }}>
+                  <ListItem
+                    leadingIcon="description"
+                    headline={s.source_uri}
+                    supportingText={`${s.chunk_count} chunks · ${s.source_type}`}
+                    trailing={
+                      <IconButton
+                        icon="delete"
+                        variant="standard"
+                        aria-label={`Delete ${s.source_uri}`}
+                        onClick={() => handleDeleteSource(s.source_uri)}
+                        style={{ color: "var(--color-error)" }}
+                      />
+                    }
+                  />
                 </div>
-                <button onClick={() => handleDeleteSource(s.source_uri)} className="text-xs text-red-600">
-                  Delete
-                </button>
-              </li>
-            ))}
-          </ul>
+              ))}
+            </Card>
+          )}
         </div>
       </div>
     </div>

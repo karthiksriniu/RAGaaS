@@ -93,7 +93,10 @@ describe("/api/escalate rate limiting (real requests, no real calls placed - blo
       responses.push(res.status);
     }
     expect(responses).toEqual([403, 403, 403, 403, 403, 429]);
-  }, 90000);
+  }, 120000); // 61s fixed wait + 6 requests that normally take ~1-2s each,
+  // but a 90s budget left too little margin for an occasional slow/cold
+  // Vercel invocation - widened for headroom, not because the requests
+  // are normally anywhere near this slow.
 });
 
 // Places a real Twilio voice call to TEST_FARMER_PHONE - opt-in only, so

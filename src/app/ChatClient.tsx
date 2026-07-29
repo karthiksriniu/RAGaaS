@@ -1,6 +1,13 @@
 "use client";
 
 import { useEffect, useRef, useState } from "react";
+import { Button } from "@/components/kiowa/Button";
+import { IconButton } from "@/components/kiowa/IconButton";
+import { TextField } from "@/components/kiowa/TextField";
+import { Card } from "@/components/kiowa/Card";
+import { StatusPill } from "@/components/kiowa/StatusPill";
+import { ProgressIndicator } from "@/components/kiowa/ProgressIndicator";
+import { Logo } from "@/components/Logo";
 
 const PHONE_STORAGE_KEY = "agriadvisor_farmer_phone";
 const ESCALATION_COUNTDOWN_SECONDS = 10;
@@ -35,21 +42,14 @@ interface ChatMessage {
   truncated?: boolean;
 }
 
+const CONFIDENCE_TONE: Record<string, "success" | "info" | "neutral"> = {
+  "Confident recommendation": "success",
+  "Probable — expert review suggested": "info",
+  "Insufficient information": "neutral",
+};
+
 function ConfidenceBadge({ label }: { label: string }) {
-  const styles: Record<string, string> = {
-    "Confident recommendation": "bg-green-100 text-green-800 border-green-300",
-    "Probable — expert review suggested": "bg-amber-100 text-amber-800 border-amber-300",
-    "Insufficient information": "bg-neutral-200 text-neutral-600 border-neutral-300",
-  };
-  return (
-    <span
-      className={`mb-2 inline-block rounded-full border px-2.5 py-0.5 text-xs font-medium ${
-        styles[label] || styles["Insufficient information"]
-      }`}
-    >
-      {label}
-    </span>
-  );
+  return <StatusPill label={label} tone={CONFIDENCE_TONE[label] || "neutral"} style={{ marginBottom: 8 }} />;
 }
 
 function PhoneBanner({ onSave }: { onSave: (phone: string) => void }) {
@@ -70,35 +70,29 @@ function PhoneBanner({ onSave }: { onSave: (phone: string) => void }) {
   }
 
   return (
-    <div className="mx-auto mb-4 max-w-2xl rounded-xl border border-green-200 bg-green-50 p-3">
-      <p className="text-sm font-medium text-green-900">
+    <Card variant="filled" padding={16} style={{ margin: "0 auto 16px", maxWidth: 672 }}>
+      <p className="kw-body-medium" style={{ color: "var(--color-on-surface)", fontWeight: "var(--weight-medium)" }}>
         Save your phone number so we can connect you to a live expert instantly if something urgent comes up.
       </p>
-      <form onSubmit={handleSave} className="mt-2 flex flex-col gap-2 sm:flex-row">
-        <input
+      <form onSubmit={handleSave} className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-start">
+        <TextField
           value={phone}
           onChange={(e) => setPhone(e.target.value)}
           placeholder="+91 98765 43210"
-          className="flex-1 rounded-lg border border-green-300 bg-white px-3 py-2 text-sm outline-none focus:border-green-500"
+          error={!!error}
+          style={{ flex: 1, minWidth: 0 }}
         />
         <div className="flex gap-2">
-          <button
-            type="submit"
-            className="whitespace-nowrap rounded-lg bg-green-700 px-4 py-2 text-sm font-medium text-white"
-          >
-            Save
-          </button>
-          <button
-            type="button"
-            onClick={() => setDismissed(true)}
-            className="whitespace-nowrap rounded-lg px-3 py-2 text-sm text-green-800"
-          >
-            Not now
-          </button>
+          <Button type="submit" variant="filled">Save</Button>
+          <Button type="button" variant="text" onClick={() => setDismissed(true)}>Not now</Button>
         </div>
       </form>
-      {error && <p className="mt-1 text-xs text-red-600">{error}</p>}
-    </div>
+      {error && (
+        <p className="kw-body-small mt-1" style={{ color: "var(--color-error)" }}>
+          {error}
+        </p>
+      )}
+    </Card>
   );
 }
 
@@ -180,60 +174,60 @@ function EscalationCard({
   }
 
   return (
-    <div className="mt-3 rounded-xl border border-amber-300 bg-amber-50 p-3">
-      <p className="text-sm font-medium text-amber-900">
-        This needs expert confirmation before you act.
-      </p>
+    <Card variant="filled" padding={16} style={{ marginTop: 12, background: "var(--color-tertiary-container)" }}>
+      <div className="flex items-center gap-2">
+        <StatusPill label="Needs expert confirmation" tone="info" />
+      </div>
 
       {phase === "success" && (
-        <p className="mt-2 text-sm text-amber-800">
+        <p className="kw-body-medium mt-2" style={{ color: "var(--color-on-tertiary-container)" }}>
           Connecting you now — your phone will ring shortly.
         </p>
       )}
 
       {phase === "counting" && (
-        <div className="mt-2 flex items-center justify-between gap-3 rounded-lg bg-amber-100 px-3 py-2">
-          <span className="text-sm text-amber-900">
-            Connecting you to an agronomy expert in <span className="font-semibold">{countdown}s</span>…
+        <div
+          className="mt-3 flex items-center justify-between gap-3"
+          style={{ borderRadius: "var(--radius-sm)", background: "var(--color-surface)", padding: "8px 12px" }}
+        >
+          <span className="kw-body-medium" style={{ color: "var(--color-on-surface)" }}>
+            Connecting you to an expert in <span style={{ fontWeight: "var(--weight-semibold)" }}>{countdown}s</span>…
           </span>
-          <button
-            onClick={handleSkip}
-            className="whitespace-nowrap rounded-lg border border-amber-400 px-3 py-1.5 text-sm font-medium text-amber-800"
-          >
-            Skip
-          </button>
+          <Button type="button" variant="outlined" size="small" onClick={handleSkip}>Skip</Button>
         </div>
       )}
 
       {phase === "submitting" && (
-        <p className="mt-2 text-sm text-amber-800">Connecting you now…</p>
+        <div className="mt-3 flex items-center gap-2">
+          <ProgressIndicator variant="circular" size={18} thickness={2} />
+          <p className="kw-body-medium" style={{ color: "var(--color-on-tertiary-container)" }}>Connecting you now…</p>
+        </div>
       )}
 
       {(phase === "entering" || phase === "skipped") && (
-        <form onSubmit={handleManualConnect} className="mt-2 flex flex-col gap-2 sm:flex-row">
-          <input
+        <form onSubmit={handleManualConnect} className="mt-3 flex flex-col gap-2 sm:flex-row sm:items-start">
+          <TextField
             value={phoneInput}
             onChange={(e) => handlePhoneChange(e.target.value)}
             placeholder="+91 98765 43210"
-            className="flex-1 rounded-lg border border-amber-300 bg-white px-3 py-2 text-sm outline-none focus:border-amber-500"
+            error={!!error}
+            style={{ flex: 1, minWidth: 0 }}
           />
-          <button
-            type="submit"
-            disabled={!phoneInput.trim()}
-            className="whitespace-nowrap rounded-lg bg-amber-600 px-4 py-2 text-sm font-medium text-white disabled:opacity-40"
-          >
-            Talk to an expert now
-          </button>
+          <Button type="submit" variant="filled" disabled={!phoneInput.trim()}>Talk to an expert now</Button>
         </form>
       )}
 
-      {phase === "error" && <p className="mt-2 text-xs text-red-600">{error}</p>}
+      {phase === "error" && (
+        <p className="kw-body-small mt-2" style={{ color: "var(--color-error)" }}>
+          {error}
+        </p>
+      )}
       {(phase === "entering" || phase === "skipped") && (
-        <p className="mt-2 text-xs text-amber-700">
+        <p className="kw-body-small mt-2" style={{ color: "var(--color-on-tertiary-container)" }}>
           Use international format, e.g. +91 for India — the countdown starts automatically once it&apos;s valid.
         </p>
       )}
-    </div>
+    </Card>
   );
 }
 
@@ -399,38 +393,40 @@ function VoiceButton({
 
   return (
     <div className="relative flex items-center">
-      <button
-        type="button"
-        onClick={handleClick}
-        disabled={state === "transcribing"}
-        title={state === "recording" ? "Tap to stop" : "Ask by voice"}
-        className={`flex h-10 w-10 items-center justify-center rounded-full border transition-colors ${
-          state === "recording"
-            ? "border-red-400 bg-red-50 text-red-600"
-            : "border-neutral-300 text-neutral-600 hover:bg-neutral-50"
-        } disabled:opacity-40`}
-      >
-        {state === "transcribing" ? (
-          <svg className="h-5 w-5 animate-spin" viewBox="0 0 24 24" fill="none">
-            <circle className="opacity-25" cx="12" cy="12" r="9" stroke="currentColor" strokeWidth="3" />
-            <path d="M21 12a9 9 0 0 0-9-9" stroke="currentColor" strokeWidth="3" strokeLinecap="round" />
-          </svg>
-        ) : (
-          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" className="h-5 w-5">
-            <rect x="9" y="3" width="6" height="11" rx="3" />
-            <path d="M5 11a7 7 0 0 0 14 0" />
-            <path d="M12 18v3" />
-            <path d="M9 21h6" />
-          </svg>
-        )}
-      </button>
+      {state === "transcribing" ? (
+        <div style={{ width: 40, height: 40, display: "flex", alignItems: "center", justifyContent: "center" }}>
+          <ProgressIndicator variant="circular" size={22} thickness={2} />
+        </div>
+      ) : (
+        <IconButton
+          icon="mic"
+          variant={state === "recording" ? "filled" : "tonal"}
+          disabled={false}
+          onClick={handleClick}
+          aria-label={state === "recording" ? "Tap to stop" : "Ask by voice"}
+          style={
+            state === "recording"
+              ? { background: "var(--color-error-container)", color: "var(--color-on-error-container)" }
+              : undefined
+          }
+        />
+      )}
       {state === "recording" && (
-        <span className="absolute -top-7 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-full bg-red-600 px-2 py-0.5 text-xs text-white">
+        <span
+          className="absolute -top-7 left-1/2 -translate-x-1/2 whitespace-nowrap kw-label-small"
+          style={{ borderRadius: "var(--radius-full)", background: "var(--color-error)", color: "var(--color-on-error)", padding: "2px 8px" }}
+        >
           {mm}:{ss}
         </span>
       )}
       {state === "error" && error && (
-        <span className="absolute -top-8 left-1/2 -translate-x-1/2 whitespace-nowrap rounded-lg bg-red-50 px-2 py-1 text-xs text-red-600 shadow">
+        <span
+          className="absolute -top-9 left-1/2 -translate-x-1/2 whitespace-nowrap kw-label-small"
+          style={{
+            borderRadius: "var(--radius-sm)", background: "var(--color-error-container)", color: "var(--color-on-error-container)",
+            padding: "4px 8px", boxShadow: "var(--elevation-1)",
+          }}
+        >
           {error}
         </span>
       )}
@@ -514,13 +510,25 @@ export default function ChatClient({ tenantSlug }: { tenantSlug: string }) {
   }
 
   return (
-    <div className="flex h-screen flex-col bg-neutral-50 text-neutral-900">
-      <header className="flex items-center justify-between border-b border-neutral-200 bg-white px-4 py-3">
-        <div className="flex items-center gap-2">
-          <h1 className="text-lg font-semibold text-green-800">AgriAdvisor</h1>
-          <span className="rounded-full bg-neutral-100 px-2 py-0.5 text-xs font-medium text-neutral-500">
-            Web demo
-          </span>
+    <div
+      // h-dvh (dynamic viewport height), not h-screen (100vh): 100vh is
+      // computed against the mobile browser's largest possible viewport
+      // (address bar collapsed), so on load - before the user scrolls, with
+      // the address bar still showing - the page renders taller than what's
+      // actually visible, pushing the input bar below the fold until the
+      // page itself is scrolled. dvh tracks the real, current viewport.
+      className="flex h-dvh flex-col"
+      style={{ background: "var(--color-surface)", color: "var(--color-on-surface)" }}
+    >
+      <header
+        className="flex items-center justify-between px-4 py-3"
+        style={{ borderBottom: "1px solid var(--color-outline-variant)", background: "var(--color-surface-container-lowest)" }}
+      >
+        <div className="flex items-center gap-2.5">
+          <Logo size={28} />
+          <h1 className="kw-title-large" style={{ fontFamily: "var(--font-brand)", fontWeight: "var(--weight-bold)", color: "var(--color-primary)" }}>
+            MyBizCare
+          </h1>
         </div>
       </header>
 
@@ -528,15 +536,16 @@ export default function ChatClient({ tenantSlug }: { tenantSlug: string }) {
         {phoneLoaded && !farmerPhone && <PhoneBanner onSave={handleSavePhone} />}
 
         {messages.length === 0 && (
-          <div className="mx-auto max-w-md pt-12 text-center text-neutral-500">
-            <p className="text-base">
-              Ask a question about seeds, crop conditions, or agronomy.
+          <div className="mx-auto flex max-w-md flex-col items-center gap-3 pt-16 text-center">
+            <Logo size={40} />
+            <p
+              className="kw-headline-small"
+              style={{ fontFamily: "var(--font-brand)", fontWeight: "var(--weight-bold)", color: "var(--color-on-surface)" }}
+            >
+              How can we help today?
             </p>
-            <p className="mt-2 text-sm">
-              Answers are drawn from the uploaded knowledge base.
-            </p>
-            <p className="mt-4 rounded-lg bg-green-50 px-3 py-2 text-xs text-green-800">
-              Farmers should use WhatsApp — send a voice note and get a spoken + written answer back. This page is a secondary demo for testing the pipeline.
+            <p className="kw-body-medium" style={{ color: "var(--color-on-surface-variant)" }}>
+              Tell us what's going on, and we'll help you find the next step.
             </p>
           </div>
         )}
@@ -544,32 +553,35 @@ export default function ChatClient({ tenantSlug }: { tenantSlug: string }) {
           {messages.map((m, i) => (
             <div
               key={i}
-              className={`rounded-2xl px-4 py-3 ${
+              className="px-4 py-3"
+              style={
                 m.role === "user"
-                  ? "ml-auto max-w-[85%] bg-green-700 text-white"
-                  : "mr-auto max-w-[92%] border border-neutral-200 bg-white"
-              }`}
+                  ? {
+                      marginLeft: "auto", maxWidth: "85%", borderRadius: "var(--radius-lg)",
+                      background: "var(--color-primary)", color: "var(--color-on-primary)",
+                    }
+                  : {
+                      marginRight: "auto", maxWidth: "92%", borderRadius: "var(--radius-lg)",
+                      background: "var(--color-surface-container-lowest)", border: "1px solid var(--color-outline-variant)",
+                    }
+              }
             >
-              {m.role === "assistant" && m.confidenceLabel && (
-                <div>
-                  <ConfidenceBadge label={m.confidenceLabel} />
-                </div>
-              )}
-              <p className="whitespace-pre-wrap text-[15px] leading-relaxed">{m.text}</p>
+              {m.role === "assistant" && m.confidenceLabel && <ConfidenceBadge label={m.confidenceLabel} />}
+              <p className="kw-body-medium whitespace-pre-wrap" style={{ lineHeight: "var(--type-body-large-line)" }}>{m.text}</p>
               {m.truncated && (
-                <p className="mt-2 text-xs text-amber-600">
+                <p className="kw-body-small mt-2" style={{ color: "var(--color-tertiary)" }}>
                   This answer may have been cut short — ask again or rephrase for a shorter response.
                 </p>
               )}
               {m.citations && m.citations.length > 0 && (
-                <div className="mt-3 flex flex-col gap-2 border-t border-neutral-200 pt-2">
+                <div className="mt-3 flex flex-col gap-2 pt-2" style={{ borderTop: "1px solid var(--color-outline-variant)" }}>
                   {m.citations.map((c) => (
-                    <div key={c.index} className="rounded-lg bg-neutral-50 p-2 text-xs text-neutral-600">
-                      <span className="font-semibold">
+                    <div key={c.index} className="p-2" style={{ borderRadius: "var(--radius-sm)", background: "var(--color-surface-container)" }}>
+                      <span className="kw-label-medium" style={{ color: "var(--color-on-surface)", fontWeight: "var(--weight-semibold)" }}>
                         [{c.index}] {c.source_uri}
                       </span>
-                      {c.heading && <span className="text-neutral-400"> — {c.heading}</span>}
-                      <p className="mt-1 line-clamp-2 text-neutral-500">{c.excerpt}</p>
+                      {c.heading && <span className="kw-label-medium" style={{ color: "var(--color-on-surface-variant)" }}> — {c.heading}</span>}
+                      <p className="kw-body-small mt-1 line-clamp-2" style={{ color: "var(--color-on-surface-variant)" }}>{c.excerpt}</p>
                     </div>
                   ))}
                 </div>
@@ -580,17 +592,27 @@ export default function ChatClient({ tenantSlug }: { tenantSlug: string }) {
             </div>
           ))}
           {asking && (
-            <div className="mr-auto max-w-[85%] rounded-2xl border border-neutral-200 bg-white px-4 py-3 text-sm text-neutral-400">
-              Thinking…
+            <div
+              className="mr-auto flex max-w-[85%] items-center gap-2 px-4 py-3"
+              style={{ borderRadius: "var(--radius-lg)", background: "var(--color-surface-container-lowest)", border: "1px solid var(--color-outline-variant)" }}
+            >
+              <ProgressIndicator variant="circular" size={16} thickness={2} />
+              <span className="kw-body-medium" style={{ color: "var(--color-on-surface-variant)" }}>Thinking…</span>
             </div>
           )}
         </div>
       </div>
 
-      <form onSubmit={handleAsk} className="border-t border-neutral-200 bg-white px-4 py-3">
+      <form
+        onSubmit={handleAsk}
+        className="px-4 py-3"
+        style={{ borderTop: "1px solid var(--color-outline-variant)", background: "var(--color-surface-container-lowest)" }}
+      >
         {detectedLanguage && (
           <div className="mx-auto mb-2 flex max-w-2xl items-center gap-1.5">
-            <span className="text-xs text-neutral-400">Heard in {detectedLanguage} · translated to English</span>
+            <span className="kw-label-small" style={{ color: "var(--color-on-surface-variant)" }}>
+              Heard in {detectedLanguage} · translated to English
+            </span>
           </div>
         )}
         <div className="mx-auto flex max-w-2xl items-center gap-2">
@@ -603,28 +625,36 @@ export default function ChatClient({ tenantSlug }: { tenantSlug: string }) {
                 if (detectedLanguage) setDetectedLanguage(null);
               }}
               disabled={isRecording}
-              placeholder={isRecording ? "" : "Ask about a crop, pest, or disease…"}
-              className="w-full rounded-full border border-neutral-300 px-4 py-2.5 text-[15px] outline-none focus:border-green-600 disabled:bg-neutral-50"
+              placeholder={isRecording ? "" : "Ask a question…"}
+              className="w-full outline-none"
+              style={{
+                borderRadius: "var(--radius-full)", border: "1px solid var(--color-outline)",
+                padding: "10px 16px", fontSize: 15, fontFamily: "var(--font-ui)",
+                background: isRecording ? "var(--color-surface-container)" : "var(--color-surface)",
+                color: "var(--color-on-surface)",
+              }}
             />
             {isRecording && (
-              <span className="pointer-events-none absolute inset-y-0 left-4 flex items-center gap-1.5 text-[15px] text-red-600">
-                <span className="h-2 w-2 animate-pulse rounded-full bg-red-500" />
+              <span
+                className="pointer-events-none absolute inset-y-0 left-4 flex items-center gap-1.5 text-[15px]"
+                style={{ color: "var(--color-error)" }}
+              >
+                <span className="h-2 w-2 animate-pulse rounded-full" style={{ background: "var(--color-error)" }} />
                 Voice input — listening…
               </span>
             )}
           </div>
-          <button
-            type="submit"
-            disabled={asking || !question.trim() || isRecording}
-            className="rounded-full bg-green-700 px-5 py-2.5 text-sm font-medium text-white disabled:opacity-40"
-          >
+          <Button type="submit" variant="filled" disabled={asking || !question.trim() || isRecording}>
             Ask
-          </button>
+          </Button>
         </div>
       </form>
 
       {farmerPhone && (
-        <div className="border-t border-neutral-200 bg-neutral-50 px-4 py-1.5 text-center text-xs text-neutral-400">
+        <div
+          className="px-4 py-1.5 text-center kw-label-small"
+          style={{ borderTop: "1px solid var(--color-outline-variant)", background: "var(--color-surface)", color: "var(--color-on-surface-variant)" }}
+        >
           Expert callback number on file: {farmerPhone}
         </div>
       )}

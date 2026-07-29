@@ -1,6 +1,8 @@
 import { headers } from "next/headers";
 import ChatClient from "./ChatClient";
 import { getTenant } from "@/lib/tenants";
+import { Card } from "@/components/kiowa/Card";
+import { Logo } from "@/components/Logo";
 
 // This page's content depends entirely on the request's Host header (which
 // tenant, or no tenant at all) - it must never be statically cached or
@@ -8,22 +10,30 @@ import { getTenant } from "@/lib/tenants";
 // force that in every deployment; this makes it explicit.
 export const dynamic = "force-dynamic";
 
-function NoTenantLanding() {
+function LandingMessage({ text }: { text: string }) {
   return (
-    <div className="flex h-screen items-center justify-center bg-neutral-50 px-4 text-center">
-      <p className="text-neutral-500">This address isn&apos;t linked to a business yet.</p>
+    <div
+      className="flex min-h-screen items-center justify-center px-4"
+      style={{ background: "var(--color-surface)" }}
+    >
+      <Card variant="elevated" padding={32} style={{ maxWidth: 420, textAlign: "center" }}>
+        <div className="mb-4 flex justify-center">
+          <Logo size={40} />
+        </div>
+        <p className="kw-body-large" style={{ color: "var(--color-on-surface-variant)" }}>
+          {text}
+        </p>
+      </Card>
     </div>
   );
 }
 
+function NoTenantLanding() {
+  return <LandingMessage text="This address isn't linked to a business yet." />;
+}
+
 function TenantExpiredLanding() {
-  return (
-    <div className="flex h-screen items-center justify-center bg-neutral-50 px-4 text-center">
-      <p className="text-neutral-500">
-        This service is currently unavailable — contact the business for details.
-      </p>
-    </div>
-  );
+  return <LandingMessage text="This service is currently unavailable — contact the business for details." />;
 }
 
 export default async function Home() {

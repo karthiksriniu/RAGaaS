@@ -15,7 +15,7 @@ describe("tenant CRUD", () => {
     const chatRes = await fetch(`https://${subdomain}.staging.mybizcare.com/`);
     expect(chatRes.status).toBe(200);
     const html = await chatRes.text();
-    expect(html).toContain("AgriAdvisor"); // chat UI rendered, not the no-tenant landing
+    expect(html).toContain("MyBizCare"); // chat UI rendered, not the no-tenant landing
     expect(html).not.toContain("linked to a business"); // the NoTenantLanding copy
   });
 
@@ -117,6 +117,29 @@ describe("tenant CRUD", () => {
     const numberBody = await numberRes.json();
     expect(numberBody.tenant.twilioWhatsappNumber).toBe("whatsapp:+15559998888");
     expect(numberBody.tenant.licenseExpiresAt).toBeTruthy(); // unaffected by the number-only patch
+  });
+
+  it("PATCHes answerConfigMd and clears it back to null", async () => {
+    const { id, cookie } = await createTestTenant("config");
+    const config = "Keep answers under 3 sentences. Never mention pruning unless asked.";
+
+    const setRes = await fetch(`${baseUrl()}/api/admin/tenants/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({ answerConfigMd: config }),
+    });
+    expect(setRes.status).toBe(200);
+    const setBody = await setRes.json();
+    expect(setBody.tenant.answerConfigMd).toBe(config);
+
+    const clearRes = await fetch(`${baseUrl()}/api/admin/tenants/${id}`, {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json", Cookie: cookie },
+      body: JSON.stringify({ answerConfigMd: null }),
+    });
+    expect(clearRes.status).toBe(200);
+    const clearBody = await clearRes.json();
+    expect(clearBody.tenant.answerConfigMd).toBeNull();
   });
 
   it("tenant list includes rootDomain", async () => {
