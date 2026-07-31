@@ -76,6 +76,19 @@ function dedupeConsecutive(texts: string[]): string[] {
   return texts.filter((t, i) => i === 0 || t.trim() !== texts[i - 1].trim());
 }
 
+/** chunkHtmlByHeadings keeps the heading as the first line of the chunk body,
+ * so emitting both the "### Heading" and the chunk verbatim prints the heading
+ * twice in a row. Strip the echoed first line rather than the heading itself -
+ * the heading is the useful structural signal for Sarvam's re-chunking. */
+function stripEchoedHeading(text: string, heading: string | null): string {
+  if (!heading) return text;
+  const lines = text.split("\n");
+  if (lines[0]?.trim() === heading.trim()) {
+    return lines.slice(1).join("\n").replace(/^\n+/, "");
+  }
+  return text;
+}
+
 export function buildDerivedKb({
   tenantName,
   sources,
@@ -116,7 +129,7 @@ export function buildDerivedKb({
         flush();
         currentHeading = chunk.page_or_row;
       }
-      buffer.push(chunk.text.trim());
+      buffer.push(stripEchoedHeading(chunk.text.trim(), chunk.page_or_row).trim());
     }
     flush();
   }

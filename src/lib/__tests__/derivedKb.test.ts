@@ -83,6 +83,30 @@ describe("buildDerivedKb", () => {
     expect(document.match(/Repeated passage\./g)).toHaveLength(1);
   });
 
+  it("does not print the heading twice when the chunk body echoes it", () => {
+    // chunkHtmlByHeadings keeps the heading as the chunk's first line.
+    const { document } = buildDerivedKb({
+      tenantName: "T",
+      sources: [source("kb.docx", [["Introduction\n\nReal body text.", "Introduction"]])],
+      answerConfigMd: null,
+      generatedAt: AT,
+    });
+    expect(document.match(/Introduction/g)).toHaveLength(1);
+    expect(document).toContain("### Introduction");
+    expect(document).toContain("Real body text.");
+  });
+
+  it("leaves the body untouched when its first line is not the heading", () => {
+    const { document } = buildDerivedKb({
+      tenantName: "T",
+      sources: [source("kb.docx", [["Actual content here.", "Some Heading"]])],
+      answerConfigMd: null,
+      generatedAt: AT,
+    });
+    expect(document).toContain("### Some Heading");
+    expect(document).toContain("Actual content here.");
+  });
+
   it("omits the heading level entirely when chunks have no page_or_row", () => {
     const { document } = buildDerivedKb({
       tenantName: "T",
