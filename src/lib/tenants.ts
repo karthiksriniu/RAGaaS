@@ -19,6 +19,13 @@ export interface Tenant {
    * Not a secret, safe to return from the admin API unlike the Twilio
    * auth token above. */
   answerConfigMd: string | null;
+  /** When this tenant's derived KB was last marked as uploaded into its Sarvam
+   * voice agent, and the content hash that was uploaded. Sarvam has no KB API,
+   * so the upload is a manual dashboard step and these record what the admin
+   * confirmed - comparing the stored hash against a freshly generated one is
+   * what tells "in sync" from "KB changed, re-upload needed". */
+  derivedKbUploadedAt: string | null;
+  derivedKbUploadedHash: string | null;
   licenseExpiresAt: string | null;
   archivedAt: string | null;
   createdAt: string;
@@ -60,6 +67,8 @@ interface TenantRow {
   twilio_account_sid: string | null;
   twilio_auth_token: string | null;
   answer_config_md: string | null;
+  derived_kb_uploaded_at: string | null;
+  derived_kb_uploaded_hash: string | null;
   license_expires_at: string | null;
   archived_at: string | null;
   created_at: string;
@@ -79,6 +88,8 @@ function mapRow(row: TenantRow): Tenant {
     twilioAccountSid: row.twilio_account_sid,
     hasCustomTwilioAuthToken: !!row.twilio_auth_token,
     answerConfigMd: row.answer_config_md,
+    derivedKbUploadedAt: row.derived_kb_uploaded_at,
+    derivedKbUploadedHash: row.derived_kb_uploaded_hash,
     licenseExpiresAt: row.license_expires_at,
     archivedAt: row.archived_at,
     createdAt: row.created_at,
@@ -241,6 +252,20 @@ export async function updateTenantAnswerConfig(
   const result = await pool.query<TenantRow>(
     `UPDATE tenants SET answer_config_md = $2 WHERE id = $1 AND archived_at IS NULL RETURNING *`,
     [id, answerConfigMd]
+  );
+  if (result.rows.length === 0) throw new TenantNotFoundError(id);
+  return mapRow(result.rows[0]);
+}
+
+/** Records that the admin has uploaded this tenant's derived KB into Sarvam.
+ * Stores the hash of exactly what was uploaded so a later regeneration can be
+ * compared against it - a timestamp alone could not distinguish "KB changed
+ * since upload" from "nothing changed, just regenerated". */
+export async function markDerivedKbUploaded(id: string, contentHash: string): Promise<Tenant> {
+  const result = await pool.query<TenantRow>(
+    `UPDATE tenants SET derived_kb_uploaded_at = now(), derived_kb_uploaded_hash = $2
+     WHERE id = $1 AND archived_at IS NULL RETURNING *`,
+    [id, contentHash]
   );
   if (result.rows.length === 0) throw new TenantNotFoundError(id);
   return mapRow(result.rows[0]);

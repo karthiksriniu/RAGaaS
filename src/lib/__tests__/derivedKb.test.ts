@@ -210,6 +210,67 @@ describe("buildDerivedKb", () => {
     expect(stats.characterCount).toBe(document.length);
   });
 
+  describe("contentHash", () => {
+    const base = {
+      tenantName: "T",
+      sources: [source("kb.docx", [["Content.", "H"]])],
+      answerConfigMd: "Be brief.",
+    };
+
+    it("is stable across runs for identical input", () => {
+      const a = buildDerivedKb({ ...base, generatedAt: AT });
+      const b = buildDerivedKb({ ...base, generatedAt: AT });
+      expect(a.contentHash).toBe(b.contentHash);
+    });
+
+    it("ignores the generated-on date, so a new day alone is not a change", () => {
+      // Otherwise every export would read as "re-upload needed" once a day.
+      const a = buildDerivedKb({ ...base, generatedAt: new Date("2026-07-31T00:00:00Z") });
+      const b = buildDerivedKb({ ...base, generatedAt: new Date("2027-01-15T00:00:00Z") });
+      expect(a.document).not.toBe(b.document); // the visible stamp did change
+      expect(a.contentHash).toBe(b.contentHash); // but the content did not
+    });
+
+    it("changes when KB content changes", () => {
+      const a = buildDerivedKb({ ...base, generatedAt: AT });
+      const b = buildDerivedKb({
+        ...base,
+        sources: [source("kb.docx", [["Different content.", "H"]])],
+        generatedAt: AT,
+      });
+      expect(a.contentHash).not.toBe(b.contentHash);
+    });
+
+    it("changes when the answer config changes, since that is pasted into Sarvam too", () => {
+      const a = buildDerivedKb({ ...base, generatedAt: AT });
+      const b = buildDerivedKb({ ...base, answerConfigMd: "Be verbose.", generatedAt: AT });
+      expect(a.contentHash).not.toBe(b.contentHash);
+    });
+
+    it("changes when the tenant name changes, since it appears in the description", () => {
+      const a = buildDerivedKb({ ...base, generatedAt: AT });
+      const b = buildDerivedKb({ ...base, tenantName: "Renamed Co", generatedAt: AT });
+      expect(a.contentHash).not.toBe(b.contentHash);
+    });
+
+    it("does not collide when content shifts across a field boundary", () => {
+      // A space separator would make these two hash identically.
+      const a = buildDerivedKb({
+        tenantName: "A B",
+        sources: [source("k.docx", [["x", null]])],
+        answerConfigMd: null,
+        generatedAt: AT,
+      });
+      const b = buildDerivedKb({
+        tenantName: "A",
+        sources: [source("k.docx", [["x", null]])],
+        answerConfigMd: "B",
+        generatedAt: AT,
+      });
+      expect(a.contentHash).not.toBe(b.contentHash);
+    });
+  });
+
   it("never leaves more than one blank line between blocks", () => {
     const { document } = buildDerivedKb({
       tenantName: "T",

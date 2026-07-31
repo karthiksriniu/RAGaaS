@@ -89,3 +89,13 @@ create table if not exists rate_limit_events (
 
 create index if not exists rate_limit_events_bucket_idx
   on rate_limit_events (bucket_key, created_at);
+
+-- Sarvam has no knowledge-base API (verified by probing: every KB-shaped path
+-- 404s, where a real-but-undocumented route like /connections 500s instead),
+-- so pushing a tenant's derived KB into a Sarvam voice agent is a manual
+-- dashboard upload. These two columns record what was last uploaded so the
+-- admin UI can tell "in sync" from "the KB changed, re-upload needed" - the
+-- hash is of the generated artifacts, not of the source chunks, so editing a
+-- doc in a way that doesn't change the derived output correctly stays in sync.
+alter table tenants add column if not exists derived_kb_uploaded_at timestamptz;
+alter table tenants add column if not exists derived_kb_uploaded_hash text;

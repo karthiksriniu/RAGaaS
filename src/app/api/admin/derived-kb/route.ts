@@ -1,7 +1,12 @@
 import { NextRequest, NextResponse } from "next/server";
 import { withTenant } from "@/lib/db";
 import { isAdminSession } from "@/lib/adminAuth";
-import { assertTenantExists, TenantNotFoundError, getTenantAnswerConfig } from "@/lib/tenants";
+import {
+  assertTenantExists,
+  TenantNotFoundError,
+  getTenantAnswerConfig,
+  markDerivedKbUploaded,
+} from "@/lib/tenants";
 import { buildDerivedKb, type DerivedKbSource } from "@/lib/derivedKb";
 
 export const runtime = "nodejs";
@@ -86,7 +91,52 @@ export async function GET(req: NextRequest) {
       });
     }
 
-    return NextResponse.json(artifacts);
+    // Sync state is derived by comparing hashes rather than timestamps: an
+    // ingest that doesn't change the generated output (re-uploading an
+    // identical file, say) correctly stays "in sync" instead of nagging.
+    const uploadedHash = tenant.derivedKbUploadedHash;
+    const sync = !uploadedHash
+      ? "never_uploaded"
+      : uploadedHash === artifacts.contentHash
+        ? "in_sync"
+        : "needs_upload";
+
+    return NextResponse.json({
+      ...artifacts,
+      sync,
+      uploadedAt: tenant.derivedKbUploadedAt,
+    });
+  } catch (err) {
+    if (err instanceof TenantNotFoundError) {
+      return NextResponse.json({ error: err.message }, { status: 400 });
+    }
+    throw err;
+  }
+}
+
+/** Records that the admin has uploaded the current artifacts into Sarvam.
+ * Takes the hash the browser was actually shown rather than recomputing it
+ * server-side, so marking "uploaded" can never claim a newer state than what
+ * the admin saw and copied. A stale hash is rejected rather than trusted. */
+export async function POST(req: NextRequest) {
+  if (!isAdminSession(req)) {
+    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+  }
+
+  const { tenantId, contentHash } = await req.json();
+  if (!tenantId) {
+    return NextResponse.json({ error: "tenantId is required" }, { status: 400 });
+  }
+  if (!contentHash || typeof contentHash !== "string") {
+    return NextResponse.json({ error: "contentHash is required" }, { status: 400 });
+  }
+
+  try {
+    const tenant = await markDerivedKbUploaded(tenantId, contentHash);
+    return NextResponse.json({
+      sync: "in_sync",
+      uploadedAt: tenant.derivedKbUploadedAt,
+    });
   } catch (err) {
     if (err instanceof TenantNotFoundError) {
       return NextResponse.json({ error: err.message }, { status: 400 });
