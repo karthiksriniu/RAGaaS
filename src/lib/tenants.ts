@@ -24,6 +24,8 @@ export interface Tenant {
    * so the upload is a manual dashboard step and these record what the admin
    * confirmed - comparing the stored hash against a freshly generated one is
    * what tells "in sync" from "KB changed, re-upload needed". */
+  /** E.164 number customers dial to reach this tenant's voice agent. */
+  voicePhoneNumber: string | null;
   derivedKbUploadedAt: string | null;
   derivedKbUploadedHash: string | null;
   licenseExpiresAt: string | null;
@@ -67,6 +69,7 @@ interface TenantRow {
   twilio_account_sid: string | null;
   twilio_auth_token: string | null;
   answer_config_md: string | null;
+  voice_phone_number: string | null;
   derived_kb_uploaded_at: string | null;
   derived_kb_uploaded_hash: string | null;
   license_expires_at: string | null;
@@ -88,6 +91,7 @@ function mapRow(row: TenantRow): Tenant {
     twilioAccountSid: row.twilio_account_sid,
     hasCustomTwilioAuthToken: !!row.twilio_auth_token,
     answerConfigMd: row.answer_config_md,
+    voicePhoneNumber: row.voice_phone_number,
     derivedKbUploadedAt: row.derived_kb_uploaded_at,
     derivedKbUploadedHash: row.derived_kb_uploaded_hash,
     licenseExpiresAt: row.license_expires_at,
@@ -252,6 +256,33 @@ export async function updateTenantAnswerConfig(
   const result = await pool.query<TenantRow>(
     `UPDATE tenants SET answer_config_md = $2 WHERE id = $1 AND archived_at IS NULL RETURNING *`,
     [id, answerConfigMd]
+  );
+  if (result.rows.length === 0) throw new TenantNotFoundError(id);
+  return mapRow(result.rows[0]);
+}
+
+/** Resolves the tenant whose voice agent owns a dialed number. This is what
+ * makes one voice worker serve every tenant - it is the same lookup pattern as
+ * getTenantByWhatsappNumber, just for the voice channel and without a wire
+ * prefix. Archived tenants are excluded so a decommissioned number stops
+ * answering rather than serving a dead tenant's knowledge base. */
+export async function getTenantByVoiceNumber(voicePhoneNumber: string): Promise<Tenant | null> {
+  if (!voicePhoneNumber) return null;
+  const result = await pool.query<TenantRow>(
+    "SELECT * FROM tenants WHERE voice_phone_number = $1 AND archived_at IS NULL",
+    [voicePhoneNumber]
+  );
+  return result.rows.length > 0 ? mapRow(result.rows[0]) : null;
+}
+
+/** Null clears the number, freeing it for another tenant. */
+export async function updateTenantVoiceNumber(
+  id: string,
+  voicePhoneNumber: string | null
+): Promise<Tenant> {
+  const result = await pool.query<TenantRow>(
+    `UPDATE tenants SET voice_phone_number = $2 WHERE id = $1 AND archived_at IS NULL RETURNING *`,
+    [id, voicePhoneNumber]
   );
   if (result.rows.length === 0) throw new TenantNotFoundError(id);
   return mapRow(result.rows[0]);

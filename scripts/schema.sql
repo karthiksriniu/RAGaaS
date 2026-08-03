@@ -99,3 +99,10 @@ create index if not exists rate_limit_events_bucket_idx
 -- doc in a way that doesn't change the derived output correctly stays in sync.
 alter table tenants add column if not exists derived_kb_uploaded_at timestamptz;
 alter table tenants add column if not exists derived_kb_uploaded_hash text;
+
+-- The phone number a tenant's customers dial to reach its voice agent, in
+-- E.164 (e.g. +918071582575). Distinct from twilio_whatsapp_number, which is
+-- stored with Twilio's "whatsapp:" wire prefix and belongs to a different
+-- channel. Unique so one number can never resolve to two tenants; nullable
+-- because a tenant may exist before a number is provisioned for it.
+alter table tenants add column if not exists voice_phone_number text unique;
