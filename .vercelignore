@@ -1,0 +1,4 @@
+# The Phase A3 LiveKit voice worker is a separate Python service that runs in
+# its own container (see voice-worker/README.md). It has no part in the
+# Next.js build and should not be shipped in the serverless bundle.
+voice-worker/
