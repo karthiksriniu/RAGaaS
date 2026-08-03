@@ -53,3 +53,46 @@ describe("chunkHtmlByHeadings", () => {
     expect(chunkHtmlByHeadings("<div>nothing recognized</div>")).toEqual([]);
   });
 });
+
+// Regression tests for a real data-loss bug: the chunker matched only <p> and
+// headings, so every table cell and list item in a source document was
+// silently discarded. In Homegrown's Q&A log the answers lived in those
+// elements, so the KB ingested questions with an empty "A:" and the model
+// invented answers from general knowledge while appearing grounded.
+describe("block-level content that is not a paragraph", () => {
+  it("keeps text inside table rows", () => {
+    const html =
+      `<h2>Dragon Fruit</h2><p>Case 11 — Q: flower set but not fruiting</p>` +
+      `<table><tr><td>A:</td><td>Apply potassium sulphate 50g per plant at flowering.</td></tr></table>`;
+    const text = chunkHtmlByHeadings(html).map((c) => c.text).join("\n");
+    expect(text).toContain("potassium sulphate 50g per plant");
+  });
+
+  it("keeps a table row's cells on one line so label and value stay together", () => {
+    const html = `<h2>H</h2><table><tr><td>A:</td><td>Do the thing.</td></tr></table>`;
+    const text = chunkHtmlByHeadings(html).map((c) => c.text).join("\n");
+    // Not "A:Do the thing." - the cell boundary must survive tag stripping.
+    expect(text).toContain("A: — Do the thing.");
+  });
+
+  it("keeps text inside bulleted lists", () => {
+    const html = `<h2>Rambutan</h2><p>A:</p><ul><li>Irrigate twice weekly</li><li>Mulch the basin</li></ul>`;
+    const text = chunkHtmlByHeadings(html).map((c) => c.text).join("\n");
+    expect(text).toContain("Irrigate twice weekly");
+    expect(text).toContain("Mulch the basin");
+  });
+
+  it("keeps numbered list items too", () => {
+    const html = `<h2>Steps</h2><ol><li>First step</li><li>Second step</li></ol>`;
+    const text = chunkHtmlByHeadings(html).map((c) => c.text).join("\n");
+    expect(text).toContain("First step");
+    expect(text).toContain("Second step");
+  });
+
+  it("attributes recovered content to the heading it sits under", () => {
+    const html = `<h2>Longan</h2><table><tr><td>Prune after harvest.</td></tr></table>`;
+    const chunks = chunkHtmlByHeadings(html);
+    const hit = chunks.find((c) => c.text.includes("Prune after harvest"));
+    expect(hit?.heading).toBe("Longan");
+  });
+});

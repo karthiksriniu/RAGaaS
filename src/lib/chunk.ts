@@ -5,6 +5,9 @@ export interface DocChunk {
 
 function stripTags(html: string): string {
   return html
+    // Cell boundaries become a separator before tags are stripped; without
+    // this, <td>A:</td><td>Apply X</td> collapses to "A:Apply X".
+    .replace(/<\/t[dh]>\s*<t[dh][^>]*>/gi, " \u2014 ")
     .replace(/<[^>]+>/g, "")
     .replace(/&amp;/g, "&")
     .replace(/&lt;/g, "<")
@@ -17,9 +20,21 @@ function stripTags(html: string): string {
 /**
  * Splits mammoth-generated HTML into chunks at heading boundaries (h1/h2/h3),
  * further splitting any section that exceeds maxChars along paragraph breaks.
+ *
+ * Block-level content is p, li and tr. Matching only <p> silently dropped
+ * every table row and list item in a source document - which, in a Q&A log
+ * where answers sit in table cells or bullets, meant the questions were
+ * ingested and the ANSWERS were not. Retrieval then returned questions with
+ * an empty "A:", and the model filled the gap from its own general knowledge
+ * while appearing grounded. Any block-level element that can carry prose must
+ * be captured here.
  */
 export function chunkHtmlByHeadings(html: string, maxChars = 1200): DocChunk[] {
-  const blockRegex = /<h([1-3])[^>]*>([\s\S]*?)<\/h\1>|<p[^>]*>([\s\S]*?)<\/p>/gi;
+  // <tr> rather than <td>: joining a row's cells into one line keeps a
+  // "label | value" pair together, which reads far better after tag-stripping
+  // than each cell becoming its own orphaned fragment.
+  const blockRegex =
+    /<h([1-3])[^>]*>([\s\S]*?)<\/h\1>|<(?:p|li|tr)[^>]*>([\s\S]*?)<\/(?:p|li|tr)>/gi;
 
   interface Section {
     heading: string;
