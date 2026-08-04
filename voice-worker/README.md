@@ -75,6 +75,20 @@ python agent.py console   # terminal-only, no telephony — fastest way to test 
 python agent.py dev       # connects to LiveKit, hot reload
 ```
 
+## Testing before the account upgrade
+
+Vobiz trial accounts allow **outbound** trunks but refuse to bind a number to an
+**inbound** trunk until the account is upgraded (KYC + a paid DID). So nobody can dial in yet.
+Dial *out* instead — same media path, same worker, same pipeline:
+
+```bash
+python agent.py dev            # terminal 1
+python dial.py +919840816035   # terminal 2 — your phone rings, the agent speaks
+```
+
+Latency, barge-in and warm transfer are all measurable this way, so Phase A does not have to
+wait on the upgrade.
+
 ## What to measure
 
 This is a spike. The questions it exists to answer:
