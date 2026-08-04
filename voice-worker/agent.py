@@ -71,6 +71,39 @@ class TenantContext:
         self.instructions = instructions
 
 
+def _normalize_e164(raw: str) -> str:
+    """Carrier-presented number -> E.164, so tenant lookup is format-proof.
+
+    Vobiz presents an inbound Indian number in national form with a leading
+    zero ("08071580725"), not E.164. Looking that up against a tenants table
+    holding "+918071580725" simply misses, and the caller hears the line was
+    never set up. Confirmed from Vobiz CDR: destination_number=08071580725.
+
+    India-specific on purpose - this product serves Indian numbers, and a
+    generic parser would need a real phone-number library. Anything already in
+    E.164 is passed through untouched, so other countries still work.
+    """
+    n = "".join(ch for ch in raw if ch.isdigit() or ch == "+").strip()
+    if n.startswith("+"):
+        return n
+    if n.startswith("00"):
+        return "+" + n[2:]
+    if len(n) == 12 and n.startswith("91"):
+        return "+" + n
+    if n.startswith("0"):
+        # A single leading 0 is India's national trunk prefix. What follows is
+        # either a bare 10-digit subscriber number or an already-country-coded
+        # one; strip the prefix and re-decide rather than assuming a length.
+        rest = n[1:]
+        if len(rest) == 10:
+            return "+91" + rest
+        if len(rest) == 12 and rest.startswith("91"):
+            return "+" + rest
+    if len(n) == 10:
+        return "+91" + n
+    return n
+
+
 def _dialed_number(ctx: JobContext) -> str | None:
     """The number the caller dialed, from the SIP participant's attributes.
 
@@ -88,7 +121,7 @@ def _dialed_number(ctx: JobContext) -> str | None:
             # returned the mock's repr as if it were a phone number, and the
             # dev fallback below never ran.
             if isinstance(value, str) and value.strip():
-                return value.strip()
+                return _normalize_e164(value)
     return None
 
 
@@ -255,7 +288,7 @@ async def entrypoint(ctx: JobContext) -> None:
         # fallback is explicitly configured, so production can never silently
         # answer as the wrong tenant.
         logger.warning("no dialed number; using DEV_FALLBACK_TENANT_NUMBER")
-        dialed = DEV_FALLBACK_TENANT_NUMBER
+        dialed = _normalize_e164(DEV_FALLBACK_TENANT_NUMBER)
 
     tenant = await _fetch_tenant(http, dialed) if dialed else None
 
