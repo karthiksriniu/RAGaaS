@@ -33,6 +33,14 @@ from livekit.agents import (
     function_tool,
 )
 
+# MUST be imported at module scope, not inside the Agent. livekit.plugins.sarvam
+# pulls in livekit.plugins.openai, which calls Plugin.register_plugin() at import
+# time, and LiveKit only permits that on the main thread - deferring it into
+# __init__ runs it in the job process and raises "Plugins must be registered on
+# the main thread". Importing here also means a missing extra fails fast at
+# startup instead of on the first call.
+from livekit.plugins import sarvam
+
 load_dotenv()
 
 logger = logging.getLogger("mybizcare-voice")
@@ -116,10 +124,6 @@ async def _fetch_tenant(http: aiohttp.ClientSession, dialed: str) -> TenantConte
 
 class MyBizCareAgent(Agent):
     def __init__(self, http: aiohttp.ClientSession, tenant: TenantContext) -> None:
-        # Imported lazily so a missing optional extra surfaces as a clear
-        # ImportError at startup rather than a confusing failure mid-call.
-        from livekit.plugins import sarvam
-
         super().__init__(
             # Instructions come from the app, already composed with this
             # tenant's answer-style config, so tone changes need no redeploy.
@@ -133,7 +137,17 @@ class MyBizCareAgent(Agent):
             # question-and-confirm turns, and reasoning latency is audible as
             # dead air on a phone line.
             llm=sarvam.LLM(model="sarvam-105b", reasoning_effort=None, max_tokens=400),
-            tts=sarvam.TTS(language_code="en-IN", model="bulbul:v3", speaker="priya"),
+            # target_language_code, not language_code - the installed plugin
+            # rejects the latter. pace/temperature match Sarvam's documented
+            # "IVR / Telephony" preset: slightly brisk and consistent, which
+            # reads as professional rather than chatty on a phone line.
+            tts=sarvam.TTS(
+                target_language_code="en-IN",
+                model="bulbul:v3",
+                speaker="priya",
+                pace=1.1,
+                temperature=0.4,
+            ),
         )
         self._http = http
         self._tenant = tenant
