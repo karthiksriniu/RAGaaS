@@ -187,7 +187,21 @@ class MyBizCareAgent(Agent):
                 "No matching information was found. Tell the caller you don't have that "
                 "information and offer to transfer them to a person."
             )
-        return context
+
+        # The success path must be framed as explicitly as the failure paths
+        # are. Returning bare context left the model with a wall of text and no
+        # instruction, while its system prompt forbids naming sources - so it
+        # treated the result as unusable and told callers there was no
+        # information, even though the facts were right there. Observed
+        # happening with retrieval demonstrably returning the right passages.
+        return (
+            "Here is the information from this business's own records. Answer the caller "
+            "using it. It is authoritative - do not contradict it or add facts of your own. "
+            "Do not mention documents, records, or where this came from; just answer. "
+            "If it genuinely does not cover what was asked, say you don't have that "
+            "information and offer to put them through to a person.\n\n"
+            f"{context}"
+        )
 
     @function_tool
     async def transfer_to_human(self, ctx: RunContext, reason: str) -> str:

@@ -26,3 +26,22 @@ export function buildContextBlock(chunks: RetrievedChunk[]): string {
     )
     .join("\n\n---\n\n");
 }
+
+/** Context for the VOICE path, where there are no citations.
+ *
+ * buildContextBlock() above prefixes every passage with "[1] (Source: file.docx
+ * — heading)" because the text path parses those numbers back out to build its
+ * citation list. Feeding that to a voice agent is actively harmful: its prompt
+ * forbids naming sources and speaking bracketed numbers, so it receives content
+ * composed entirely of things it is told never to use, with nothing marking it
+ * as data to answer from - and reasonably concludes it cannot use it, then
+ * tells the caller there is no information. Observed doing exactly that.
+ *
+ * So: passages only. The chunker already puts each section's heading on the
+ * first line, which is useful grounding without being a "source". */
+export function buildVoiceContext(chunks: RetrievedChunk[]): string {
+  return chunks
+    .map((c) => c.text.trim())
+    .filter(Boolean)
+    .join("\n\n- - -\n\n");
+}

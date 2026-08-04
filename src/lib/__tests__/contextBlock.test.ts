@@ -1,5 +1,5 @@
 import { describe, it, expect } from "vitest";
-import { buildContextBlock, type RetrievedChunk } from "../contextBlock";
+import { buildContextBlock, buildVoiceContext, type RetrievedChunk } from "../contextBlock";
 
 function chunk(overrides: Partial<RetrievedChunk> = {}): RetrievedChunk {
   return {
@@ -64,5 +64,49 @@ describe("buildContextBlock", () => {
   it("emits no divider for a single chunk", () => {
     const block = buildContextBlock([chunk({ text: "Only one." })]);
     expect(block).not.toContain("---");
+  });
+});
+
+// The voice path must NOT receive the text path's citation scaffolding. The
+// agent's prompt forbids naming sources and speaking bracketed numbers, so
+// content made of exactly those was treated as unusable and callers were told
+// there was no information — with the facts sitting in the tool result.
+describe("buildVoiceContext", () => {
+  const c = (text: string, uri = "kb.docx", heading: string | null = "H"): RetrievedChunk => ({
+    text,
+    source_type: "docx",
+    source_uri: uri,
+    page_or_row: heading,
+    similarity: 0.5,
+  });
+
+  it("emits no bracketed citation numbers", () => {
+    expect(buildVoiceContext([c("First."), c("Second.")])).not.toMatch(/\[\d+\]/);
+  });
+
+  it("never names the source file", () => {
+    const out = buildVoiceContext([c("Body text.", "Homegrown_KB_1_Verified_CRO_QA.docx")]);
+    expect(out).not.toContain("Homegrown_KB_1_Verified_CRO_QA.docx");
+    expect(out).not.toContain("Source:");
+  });
+
+  it("preserves the actual content verbatim", () => {
+    const out = buildVoiceContext([c("Actara at 0.5g/L, twice at a 14-day interval.")]);
+    expect(out).toContain("Actara at 0.5g/L, twice at a 14-day interval.");
+  });
+
+  it("keeps passages separated so they don't read as one run-on passage", () => {
+    const out = buildVoiceContext([c("First."), c("Second.")]);
+    expect(out).toContain("First.");
+    expect(out).toContain("Second.");
+    expect(out.indexOf("First.")).toBeLessThan(out.indexOf("Second."));
+  });
+
+  it("returns an empty string for no chunks, so the caller can detect no-match", () => {
+    expect(buildVoiceContext([])).toBe("");
+  });
+
+  it("drops blank chunks rather than emitting stray separators", () => {
+    expect(buildVoiceContext([c("Real."), c("   ")])).toBe("Real.");
   });
 });

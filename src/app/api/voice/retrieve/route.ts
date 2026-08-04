@@ -1,6 +1,7 @@
 import { NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "node:crypto";
-import { retrieveChunks, buildContextBlock, DEFAULT_RETRIEVAL_LIMIT } from "@/lib/retrieveChunks";
+import { retrieveChunks, DEFAULT_RETRIEVAL_LIMIT } from "@/lib/retrieveChunks";
+import { buildVoiceContext } from "@/lib/contextBlock";
 import { assertTenantLicensed, TenantNotFoundError, TenantExpiredError } from "@/lib/tenants";
 import { checkRateLimit } from "@/lib/rateLimit";
 
@@ -88,7 +89,9 @@ export async function POST(req: NextRequest) {
 
     return NextResponse.json({
       tenantId,
-      contextBlock: buildContextBlock(chunks),
+      // buildVoiceContext, NOT buildContextBlock: the citation scaffolding
+      // the text path needs makes a voice agent refuse to use the content.
+      contextBlock: buildVoiceContext(chunks),
       chunks: chunks.map((c, i) => ({
         index: i + 1,
         source_uri: c.source_uri,
