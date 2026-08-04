@@ -4,6 +4,7 @@ import { retrieveChunks, DEFAULT_RETRIEVAL_LIMIT } from "@/lib/retrieveChunks";
 import { buildVoiceContext } from "@/lib/contextBlock";
 import { assertTenantLicensed, TenantNotFoundError, TenantExpiredError } from "@/lib/tenants";
 import { checkRateLimit } from "@/lib/rateLimit";
+import { NO_MATCH_THRESHOLD } from "@/lib/answerMode";
 
 export const runtime = "nodejs";
 
@@ -85,7 +86,16 @@ export async function POST(req: NextRequest) {
     // /api/ask and the WhatsApp path gate on license state.
     await assertTenantLicensed(tenantId);
 
-    const chunks = await retrieveChunks(question, tenantId, limit);
+    const allChunks = await retrieveChunks(question, tenantId, limit);
+
+    // Drop anything below the same floor the text path uses. Without this the
+    // endpoint returned its top N regardless of score, so an out-of-scope
+    // question ("what are your office hours?") came back with kilobytes of
+    // unrelated content scoring ~0.18 - and the agent, told the content was
+    // authoritative, invented an answer from it. An empty contextBlock is what
+    // makes the worker's no-match branch fire and the caller hear an honest
+    // "I don't have that information".
+    const chunks = allChunks.filter((c) => c.similarity >= NO_MATCH_THRESHOLD);
 
     return NextResponse.json({
       tenantId,
@@ -99,6 +109,10 @@ export async function POST(req: NextRequest) {
         text: c.text,
         similarity: c.similarity,
       })),
+      // Observability: lets us tell "nothing was retrieved" from "everything
+      // retrieved scored too low to use", which look identical downstream.
+      topSimilarity: allChunks[0]?.similarity ?? null,
+      belowThreshold: allChunks.length - chunks.length,
     });
   } catch (err) {
     if (err instanceof TenantNotFoundError) {

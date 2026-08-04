@@ -18,7 +18,11 @@ export interface AnswerMode {
 //   topically relevant but no precise
 //   chunk match (vague/broad phrasing) ~0.30–0.40
 //   a specific, well-covered question  ~0.50+
-const NO_MATCH_THRESHOLD = 0.25; // below this: treat as no relevant KB content at all
+/** Below this, there is no relevant KB content. Exported because the voice
+ * path needs the SAME floor - it originally had none, returned whatever the
+ * top 6 chunks were regardless of score, and the agent duly invented an
+ * answer from content scoring 0.18. One definition, both channels. */
+export const NO_MATCH_THRESHOLD = 0.25;
 const KB_GROUNDED_THRESHOLD = 0.45; // at/above this: treat as a strong, specific match
 
 export function classifySource(topSimilarity: number | null): SourceClass {
