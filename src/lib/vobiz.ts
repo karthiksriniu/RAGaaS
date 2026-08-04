@@ -13,9 +13,10 @@
 // in our worker, from the dialed number, not in the carrier.
 //
 // KNOWN VOBIZ DEFECTS, both confirmed against a live trial account:
-//  * /origination-uris accepts the documented `sip_uri` field, returns 201/200,
-//    and persists uri:"". A trunk pointed at one has nowhere to route. Use
-//    `inbound_destination` on the trunk instead - it stores and reads back.
+//  * /origination-uris documents the field as `sip_uri`, but the service reads
+//    `uri`. Posting `sip_uri` returns 201 and silently persists uri:"", so the
+//    trunk has no routing target and Vobiz refuses every inbound call with
+//    hangup_disposition=send_refuse. Send `uri`. Confirmed by posting both.
 //  * /numbers/{e164}/assign returns 400 "access denied" on a trial account,
 //    so numbers cannot be bound to a trunk until the account is upgraded.
 //    provisionNumber() will fail at that step until then.
@@ -122,6 +123,16 @@ async function ensureLiveKitTrunk(cfg: VobizConfig): Promise<string> {
   const found = (existing.data ?? []).find((t) => t.name === TRUNK_NAME);
   if (found) return (found.uuid || found.trunk_id)!;
 
+  // `uri`, NOT the documented `sip_uri` - see the defect note at the top of
+  // this file. Getting this wrong fails silently and refuses every call.
+  const uri = await vobiz<{ id?: string; uuid?: string }>(
+    cfg,
+    "POST",
+    `/Account/${cfg.authId}/origination-uris`,
+    { name: "mybizcare-livekit", uri: cfg.livekitSipUri, priority: 1 }
+  );
+  const uriId = uri.id || uri.uuid;
+
   const trunk = await vobiz<{ uuid?: string; trunk_id?: string }>(
     cfg,
     "POST",
@@ -132,11 +143,9 @@ async function ensureLiveKitTrunk(cfg: VobizConfig): Promise<string> {
       // "enabled", not "active" - the spec calls this out explicitly as a
       // common mistake.
       trunk_status: "enabled",
-      // inbound_destination, NOT an origination URI. Verified empirically:
-      // POST and PUT /origination-uris both return success while persisting
-      // uri:"" - the documented sip_uri field is accepted and silently
-      // discarded, so a trunk pointed at one has nowhere to send calls.
-      // inbound_destination stores and reads back correctly.
+      primary_uri_uuid: uriId,
+      // Belt and braces: inbound_destination also stores correctly, but
+      // primary_uri_uuid is what Vobiz actually routes on.
       inbound_destination: cfg.livekitSipUri,
       description: "Inbound calls handed to the MyBizCare LiveKit voice worker",
     }
