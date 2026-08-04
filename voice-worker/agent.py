@@ -74,8 +74,13 @@ def _dialed_number(ctx: JobContext) -> str | None:
         attrs = getattr(participant, "attributes", None) or {}
         for key in ("sip.trunkPhoneNumber", "sip.dialedNumber", "sip.to", "sip.toNumber"):
             value = attrs.get(key)
-            if value:
-                return str(value).strip()
+            # isinstance, not truthiness: `agent.py console` supplies a
+            # MagicMock room, and every attribute access on a mock returns
+            # another mock - which is truthy. A bare `if value` therefore
+            # returned the mock's repr as if it were a phone number, and the
+            # dev fallback below never ran.
+            if isinstance(value, str) and value.strip():
+                return value.strip()
     return None
 
 
