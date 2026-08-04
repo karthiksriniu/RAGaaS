@@ -7,11 +7,18 @@
 // Built against https://vobiz.ai/openapi.json (78 paths, base https://api.vobiz.ai).
 // Auth is two headers, X-Auth-ID and X-Auth-Token, on every request.
 //
-// TRUNK MODEL: the inbound trunk and its origination URI are PLATFORM-level,
-// created once and shared by every tenant. Only the phone number is
-// per-tenant. A trunk per tenant would multiply Vobiz objects for no benefit -
-// routing to the right tenant happens in our worker, from the dialed number,
-// not in the carrier.
+// TRUNK MODEL: the inbound trunk is PLATFORM-level, created once and shared by
+// every tenant. Only the phone number is per-tenant. A trunk per tenant would
+// multiply Vobiz objects for no benefit - routing to the right tenant happens
+// in our worker, from the dialed number, not in the carrier.
+//
+// KNOWN VOBIZ DEFECTS, both confirmed against a live trial account:
+//  * /origination-uris accepts the documented `sip_uri` field, returns 201/200,
+//    and persists uri:"". A trunk pointed at one has nowhere to route. Use
+//    `inbound_destination` on the trunk instead - it stores and reads back.
+//  * /numbers/{e164}/assign returns 400 "access denied" on a trial account,
+//    so numbers cannot be bound to a trunk until the account is upgraded.
+//    provisionNumber() will fail at that step until then.
 
 const VOBIZ_BASE = "https://api.vobiz.ai/api/v1";
 
@@ -19,7 +26,6 @@ const VOBIZ_BASE = "https://api.vobiz.ai/api/v1";
  * idempotent - re-running finds the existing trunk instead of creating a
  * second one that would silently split traffic. */
 const TRUNK_NAME = "mybizcare-livekit-inbound";
-const ORIGINATION_URI_NAME = "mybizcare-livekit";
 
 export class VobizError extends Error {
   constructor(
@@ -116,14 +122,6 @@ async function ensureLiveKitTrunk(cfg: VobizConfig): Promise<string> {
   const found = (existing.data ?? []).find((t) => t.name === TRUNK_NAME);
   if (found) return (found.uuid || found.trunk_id)!;
 
-  const uri = await vobiz<{ uuid?: string; uri_id?: string }>(
-    cfg,
-    "POST",
-    `/Account/${cfg.authId}/origination-uris`,
-    { name: ORIGINATION_URI_NAME, sip_uri: cfg.livekitSipUri, priority: 1 }
-  );
-  const uriId = uri.uuid || uri.uri_id;
-
   const trunk = await vobiz<{ uuid?: string; trunk_id?: string }>(
     cfg,
     "POST",
@@ -134,7 +132,12 @@ async function ensureLiveKitTrunk(cfg: VobizConfig): Promise<string> {
       // "enabled", not "active" - the spec calls this out explicitly as a
       // common mistake.
       trunk_status: "enabled",
-      primary_uri_uuid: uriId,
+      // inbound_destination, NOT an origination URI. Verified empirically:
+      // POST and PUT /origination-uris both return success while persisting
+      // uri:"" - the documented sip_uri field is accepted and silently
+      // discarded, so a trunk pointed at one has nowhere to send calls.
+      // inbound_destination stores and reads back correctly.
+      inbound_destination: cfg.livekitSipUri,
       description: "Inbound calls handed to the MyBizCare LiveKit voice worker",
     }
   );
