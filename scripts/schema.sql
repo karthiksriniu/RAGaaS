@@ -104,3 +104,42 @@ alter table tenants add column if not exists voice_phone_number text unique;
 -- orphaned, so the schema matches the code.
 alter table tenants drop column if exists derived_kb_uploaded_at;
 alter table tenants drop column if exists derived_kb_uploaded_hash;
+
+-- ── Self-service signup ───────────────────────────────────────────────────
+-- A business owner's login. Identity is the mobile number (OTP), so there is
+-- no password column at all. One account owns exactly one tenant in this
+-- phase; the FK is on the account, not the tenant, so a future "one owner,
+-- several businesses" needs no migration of existing rows.
+create table if not exists business_accounts (
+  id text primary key,
+  mobile text not null unique,
+  tenant_id text not null references tenants(id),
+  created_at timestamptz not null default now()
+);
+create index if not exists business_accounts_tenant_idx on business_accounts (tenant_id);
+
+-- Short-lived OTP challenges. Rows are deleted on successful verification and
+-- swept on issue, so this never accumulates. attempts caps brute force
+-- against a 6-digit code.
+create table if not exists otp_challenges (
+  mobile text primary key,
+  code_hash text not null,
+  attempts int not null default 0,
+  expires_at timestamptz not null,
+  created_at timestamptz not null default now()
+);
+
+-- Numbers bought up front and handed out at signup. Signup claims a free row
+-- atomically, so it can never spend money unexpectedly and two simultaneous
+-- signups can never take the same number.
+create table if not exists phone_number_pool (
+  e164 text primary key,
+  tenant_id text references tenants(id),
+  claimed_at timestamptz,
+  created_at timestamptz not null default now()
+);
+create index if not exists phone_number_pool_free_idx on phone_number_pool (tenant_id) where tenant_id is null;
+
+-- What the business told us it does, at signup. Seeds the agent's prompt and
+-- the generated starter knowledge base.
+alter table tenants add column if not exists business_description text;

@@ -1,0 +1,290 @@
+"use client";
+
+import { useEffect, useRef, useState } from "react";
+import { useRouter } from "next/navigation";
+import { Button } from "@/components/kiowa/Button";
+import { Card } from "@/components/kiowa/Card";
+import { TextField } from "@/components/kiowa/TextField";
+import { Textarea } from "@/components/kiowa/Textarea";
+import { ListItem } from "@/components/kiowa/ListItem";
+import { IconButton } from "@/components/kiowa/IconButton";
+import { ProgressIndicator } from "@/components/kiowa/ProgressIndicator";
+import { Logo } from "@/components/Logo";
+
+type Section = "settings" | "knowledge" | "config";
+
+interface Me {
+  tenantId: string;
+  businessName: string;
+  subdomain: string;
+  mobile: string | null;
+  description: string | null;
+  voicePhoneNumber: string | null;
+  answerConfigMd: string | null;
+}
+
+interface Source {
+  source_uri: string;
+  source_type: string;
+  chunk_count: number;
+}
+
+const NAV: { id: Section; label: string; icon: string }[] = [
+  { id: "settings", label: "Settings", icon: "settings" },
+  { id: "knowledge", label: "Knowledge Sources", icon: "folder" },
+  { id: "config", label: "Configurations", icon: "tune" },
+];
+
+export default function BusinessDashboard() {
+  const router = useRouter();
+  const [section, setSection] = useState<Section>("settings");
+  const [me, setMe] = useState<Me | null>(null);
+  const [loading, setLoading] = useState(true);
+
+  const [name, setName] = useState("");
+  const [answerConfig, setAnswerConfig] = useState("");
+  const [saved, setSaved] = useState<string | null>(null);
+
+  const [sources, setSources] = useState<Source[]>([]);
+  const [uploading, setUploading] = useState(false);
+  const [uploadError, setUploadError] = useState<string | null>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
+
+  async function loadMe() {
+    const res = await fetch("/api/business/me");
+    if (res.status === 401) return router.push("/login");
+    const d: Me = await res.json();
+    setMe(d);
+    setName(d.businessName);
+    setAnswerConfig(d.answerConfigMd || "");
+    setLoading(false);
+  }
+
+  async function loadSources() {
+    const res = await fetch("/api/business/kb");
+    if (res.ok) setSources((await res.json()).sources || []);
+  }
+
+  useEffect(() => {
+    loadMe();
+    loadSources();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  async function save(body: Record<string, unknown>, label: string) {
+    await fetch("/api/business/me", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    });
+    setSaved(label);
+    setTimeout(() => setSaved((s) => (s === label ? null : s)), 2000);
+    loadMe();
+  }
+
+  async function upload(file: File) {
+    setUploading(true);
+    setUploadError(null);
+    try {
+      const fd = new FormData();
+      fd.append("file", file);
+      const res = await fetch("/api/business/kb", { method: "POST", body: fd });
+      const d = await res.json();
+      if (!res.ok) throw new Error(d.error || "Upload failed");
+      await loadSources();
+    } catch (e) {
+      setUploadError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setUploading(false);
+      if (fileRef.current) fileRef.current.value = "";
+    }
+  }
+
+  async function removeSource(sourceUri: string) {
+    await fetch("/api/business/kb", {
+      method: "DELETE",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sourceUri }),
+    });
+    loadSources();
+  }
+
+  if (loading) {
+    return (
+      <div className="flex min-h-screen items-center justify-center" style={{ background: "var(--color-surface)" }}>
+        <ProgressIndicator variant="circular" size={32} />
+      </div>
+    );
+  }
+
+  return (
+    <div className="min-h-screen" style={{ background: "var(--color-surface)", color: "var(--color-on-surface)" }}>
+      <header
+        className="flex items-center justify-between px-6 py-4"
+        style={{ borderBottom: "1px solid var(--color-outline-variant)" }}
+      >
+        <div className="flex items-center gap-3">
+          <Logo size={28} />
+          <span className="kw-title-medium">{me?.businessName}</span>
+        </div>
+        <Button
+          variant="outlined"
+          size="small"
+          icon="logout"
+          onClick={async () => {
+            await fetch("/api/business/logout", { method: "POST" });
+            router.push("/login");
+          }}
+        >
+          Sign out
+        </Button>
+      </header>
+
+      <div className="mx-auto flex max-w-5xl gap-8 px-6 py-8">
+        <nav className="w-56 shrink-0">
+          {NAV.map((n) => {
+            const active = section === n.id;
+            return (
+              <button
+                key={n.id}
+                onClick={() => setSection(n.id)}
+                className="mb-1 flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left"
+                style={{
+                  background: active ? "var(--color-secondary-container)" : "transparent",
+                  color: active ? "var(--color-on-secondary-container)" : "var(--color-on-surface-variant)",
+                  fontFamily: "var(--font-ui)",
+                  fontSize: 14,
+                  fontWeight: active ? 600 : 400,
+                }}
+              >
+                <span className="material-symbols-rounded" style={{ fontSize: 20 }}>{n.icon}</span>
+                {n.label}
+              </button>
+            );
+          })}
+        </nav>
+
+        <main className="min-w-0 flex-1">
+          {section === "settings" && (
+            <>
+              <h1 className="kw-headline-small mb-4">Settings</h1>
+              <Card variant="outlined" padding={24}>
+                <TextField label="Business name" value={name} onChange={(e) => setName(e.target.value)} />
+                <div className="mt-4">
+                  <Button variant="filled" size="small" onClick={() => save({ businessName: name }, "name")}>
+                    {saved === "name" ? "Saved" : "Save"}
+                  </Button>
+                </div>
+
+                <div className="mt-8 flex flex-col gap-4">
+                  {[
+                    { label: "Mobile number", value: me?.mobile ?? "—", hint: "Used to sign in. Cannot be changed." },
+                    { label: "Account name", value: me?.tenantId ?? "—", hint: "Permanent — it identifies your agent and your data." },
+                    { label: "Your phone number", value: me?.voicePhoneNumber ?? "Being assigned", hint: "What your customers dial." },
+                  ].map((f) => (
+                    <div key={f.label}>
+                      <p className="kw-body-small" style={{ color: "var(--color-on-surface-variant)" }}>{f.label}</p>
+                      <p className="kw-title-medium">{f.value}</p>
+                      <p className="kw-body-small" style={{ color: "var(--color-on-surface-variant)" }}>{f.hint}</p>
+                    </div>
+                  ))}
+                </div>
+              </Card>
+            </>
+          )}
+
+          {section === "knowledge" && (
+            <>
+              <h1 className="kw-headline-small mb-1">Knowledge Sources</h1>
+              <p className="kw-body-medium mb-4" style={{ color: "var(--color-on-surface-variant)" }}>
+                What your agent answers from. Upload Word documents — FAQs, policies, product notes.
+              </p>
+              <div className="mb-6 flex items-center gap-3">
+                <Button variant="tonal" icon="upload_file" disabled={uploading} onClick={() => fileRef.current?.click()}>
+                  Choose file
+                </Button>
+                {uploading && (
+                  <span className="flex items-center gap-2 kw-body-small" style={{ color: "var(--color-on-surface-variant)" }}>
+                    <ProgressIndicator variant="circular" size={16} thickness={2} />
+                    Reading document…
+                  </span>
+                )}
+              </div>
+              <input
+                ref={fileRef}
+                type="file"
+                accept=".docx"
+                className="hidden"
+                onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(f); }}
+              />
+              {uploadError && <p className="kw-body-small mb-3" style={{ color: "var(--color-error)" }}>{uploadError}</p>}
+
+              {sources.length === 0 ? (
+                <p className="kw-body-small" style={{ color: "var(--color-on-surface-variant)" }}>
+                  Nothing uploaded yet.
+                </p>
+              ) : (
+                <Card variant="outlined" padding={0}>
+                  {sources.map((s, i) => (
+                    <div key={s.source_uri} style={{ borderTop: i === 0 ? "none" : "1px solid var(--color-outline-variant)" }}>
+                      <ListItem
+                        leadingIcon={s.source_type === "generated" ? "auto_awesome" : "description"}
+                        headline={s.source_uri}
+                        supportingText={`${s.chunk_count} sections${s.source_type === "generated" ? " · created for you at signup" : ""}`}
+                        trailing={
+                          <IconButton
+                            icon="delete"
+                            variant="standard"
+                            aria-label={`Delete ${s.source_uri}`}
+                            onClick={() => removeSource(s.source_uri)}
+                            style={{ color: "var(--color-error)" }}
+                          />
+                        }
+                      />
+                    </div>
+                  ))}
+                </Card>
+              )}
+            </>
+          )}
+
+          {section === "config" && (
+            <>
+              <h1 className="kw-headline-small mb-1">Configurations</h1>
+              <p className="kw-body-medium mb-4" style={{ color: "var(--color-on-surface-variant)" }}>
+                How your agent should answer — tone, length, what to avoid. Plain text or Markdown.
+              </p>
+              <Card variant="outlined" padding={24}>
+                <Textarea
+                  label="Answer style"
+                  value={answerConfig}
+                  onChange={(e) => setAnswerConfig(e.target.value)}
+                  rows={16}
+                />
+                <div className="mt-4 flex items-center gap-3">
+                  <Button variant="filled" size="small" onClick={() => save({ answerConfigMd: answerConfig }, "config")}>
+                    {saved === "config" ? "Saved" : "Save"}
+                  </Button>
+                  <Button variant="text" size="small" icon="upload_file" onClick={() => document.getElementById("md-upload")?.click()}>
+                    Load from .md file
+                  </Button>
+                  <input
+                    id="md-upload"
+                    type="file"
+                    accept=".md,.txt"
+                    className="hidden"
+                    onChange={async (e) => {
+                      const f = e.target.files?.[0];
+                      if (f) setAnswerConfig(await f.text());
+                      e.target.value = "";
+                    }}
+                  />
+                </div>
+              </Card>
+            </>
+          )}
+        </main>
+      </div>
+    </div>
+  );
+}

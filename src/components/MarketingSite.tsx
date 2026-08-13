@@ -5,6 +5,7 @@ import { Card } from "./kiowa/Card";
 
 const CONTACT_EMAIL = "karthik.sreeni@gmail.com";
 const MAILTO = `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent("MyBizCare - let's talk")}`;
+const SIGNUP = "/signup";
 
 function Eyebrow({ children, dark = false }: { children: ReactNode; dark?: boolean }) {
   return (
@@ -78,6 +79,7 @@ const NAV_LINKS = [
   { href: "#trust", label: "Trust & privacy" },
   { href: "#industries", label: "Industries" },
   { href: "#contact", label: "Contact" },
+  { href: "/login", label: "Sign in" },
 ];
 
 export function MarketingSite() {
@@ -101,9 +103,9 @@ export function MarketingSite() {
             </a>
           ))}
         </nav>
-        <a href={MAILTO}>
+        <a href={SIGNUP}>
           <Button variant="filled" size="small">
-            Get in touch
+            Sign up
           </Button>
         </a>
       </header>
@@ -125,9 +127,9 @@ export function MarketingSite() {
             already use.
           </p>
           <div className="mt-8 flex justify-center gap-3">
-            <a href={MAILTO}>
-              <Button variant="filled" size="large" icon="mail">
-                Talk to us
+            <a href={SIGNUP}>
+              <Button variant="filled" size="large" icon="arrow_forward">
+                Get started
               </Button>
             </a>
           </div>
@@ -369,9 +371,9 @@ export function MarketingSite() {
             See it answer real questions from your own knowledge — in your very first walkthrough.
           </p>
           <div className="mt-8 flex justify-center">
-            <a href={MAILTO}>
-              <Button variant="filled" size="large" icon="mail">
-                Email us: {CONTACT_EMAIL}
+            <a href={SIGNUP}>
+              <Button variant="filled" size="large" icon="arrow_forward">
+                Get started
               </Button>
             </a>
           </div>
