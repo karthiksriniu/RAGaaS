@@ -15,9 +15,19 @@ const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30; // 30 days
 const OTP_TTL_MS = 1000 * 60 * 10; // 10 minutes
 const MAX_OTP_ATTEMPTS = 5;
 
-/** In staging the code is fixed and never delivered - see sendOtp(). Set
- * OTP_TEST_CODE in production to nothing and wire a real sender instead. */
+/** The stub code. Fixed and never delivered - see sendOtp(). */
 const STAGING_OTP_CODE = process.env.OTP_TEST_CODE || "000000";
+
+/** Whether it is safe to hand the code back to the browser.
+ *
+ * NOT NODE_ENV: Vercel sets that to "production" on the staging project too,
+ * so keying off it hides the code exactly where it is needed. The root domain
+ * is what actually distinguishes the environments. Setting OTP_TEST_CODE is an
+ * explicit override for any other non-production deployment. */
+function mayRevealCode(): boolean {
+  if (process.env.OTP_TEST_CODE) return true;
+  return (process.env.TENANT_ROOT_DOMAIN || "").startsWith("staging.");
+}
 
 function secret(): string {
   const s = process.env.ADMIN_SESSION_SECRET;
@@ -74,7 +84,7 @@ export async function sendOtp(mobile: string): Promise<SentOtp> {
   await pool.query("DELETE FROM otp_challenges WHERE expires_at < now() - interval '1 day'");
 
   console.log(`[otp] issued for ${mobile}: ${code}`);
-  return process.env.NODE_ENV === "production" ? {} : { devCode: code };
+  return mayRevealCode() ? { devCode: code } : {};
 }
 
 export type OtpResult = "ok" | "invalid" | "expired" | "too_many_attempts" | "not_found";

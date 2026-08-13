@@ -143,3 +143,21 @@ create index if not exists phone_number_pool_free_idx on phone_number_pool (tena
 -- What the business told us it does, at signup. Seeds the agent's prompt and
 -- the generated starter knowledge base.
 alter table tenants add column if not exists business_description text;
+
+-- The app connects as the non-owner app_runtime role (SUPABASE_DB_URL_APP), so
+-- every new table needs explicit grants or the app gets a permission error that
+-- surfaces as a 500. The role's PASSWORD is deliberately not in this file;
+-- grants are not secret and belong here so a fresh environment is reproducible.
+--
+-- None of these three are RLS-scoped, for the same reason `tenants` isn't: they
+-- are registries and request bookkeeping, not tenant content. business_accounts
+-- is read before any session exists (to find which tenant a mobile owns), and
+-- phone_number_pool is platform inventory.
+do $$
+begin
+  if exists (select 1 from pg_roles where rolname = 'app_runtime') then
+    grant select, insert, update, delete on business_accounts to app_runtime;
+    grant select, insert, update, delete on otp_challenges    to app_runtime;
+    grant select, insert, update, delete on phone_number_pool to app_runtime;
+  end if;
+end $$;
