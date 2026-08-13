@@ -61,7 +61,7 @@ export default function BusinessLogin() {
           We&apos;ll send a code to your mobile.
         </p>
 
-        <TextField label="Mobile number" value={mobile} onChange={(e) => setMobile(e.target.value)} type="tel" disabled={sent} />
+        <TextField fullWidth label="Mobile number" value={mobile} onChange={(e) => setMobile(e.target.value)} type="tel" disabled={sent} />
 
         {sent && (
           <>
@@ -71,7 +71,7 @@ export default function BusinessLogin() {
               </p>
             )}
             <div className="mt-4">
-              <TextField label="6-digit code" value={code} onChange={(e) => setCode(e.target.value)} />
+              <TextField fullWidth label="6-digit code" value={code} onChange={(e) => setCode(e.target.value)} />
             </div>
           </>
         )}

@@ -171,7 +171,7 @@ export default function BusinessDashboard() {
             <>
               <h1 className="kw-headline-small mb-4">Settings</h1>
               <Card variant="outlined" padding={24}>
-                <TextField label="Business name" value={name} onChange={(e) => setName(e.target.value)} />
+                <TextField fullWidth label="Business name" value={name} onChange={(e) => setName(e.target.value)} />
                 <div className="mt-4">
                   <Button variant="filled" size="small" onClick={() => save({ businessName: name }, "name")}>
                     {saved === "name" ? "Saved" : "Save"}

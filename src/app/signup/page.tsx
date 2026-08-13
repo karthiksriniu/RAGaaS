@@ -100,7 +100,7 @@ export default function SignupPage() {
             <p className="kw-body-medium mb-6" style={{ color: "var(--color-on-surface-variant)" }}>
               Two minutes. You&apos;ll have a working phone line at the end.
             </p>
-            <TextField label="Business name" value={businessName} onChange={(e) => setBusinessName(e.target.value)} />
+            <TextField fullWidth label="Business name" value={businessName} onChange={(e) => setBusinessName(e.target.value)} />
             <div className="mt-4">
               <Textarea
                 label="What does your business do? (optional)"
@@ -113,7 +113,7 @@ export default function SignupPage() {
               </p>
             </div>
             <div className="mt-4">
-              <TextField label="Mobile number" value={mobile} onChange={(e) => setMobile(e.target.value)} type="tel" />
+              <TextField fullWidth label="Mobile number" value={mobile} onChange={(e) => setMobile(e.target.value)} type="tel" />
             </div>
             {error && <p className="kw-body-small mt-3" style={{ color: "var(--color-error)" }}>{error}</p>}
             <div className="mt-6">
@@ -135,7 +135,7 @@ export default function SignupPage() {
                 Staging: SMS isn&apos;t wired up yet — your code is <strong>{devCode}</strong>
               </p>
             )}
-            <TextField label="6-digit code" value={code} onChange={(e) => setCode(e.target.value)} />
+            <TextField fullWidth label="6-digit code" value={code} onChange={(e) => setCode(e.target.value)} />
             {error && <p className="kw-body-small mt-3" style={{ color: "var(--color-error)" }}>{error}</p>}
             <div className="mt-6 flex gap-2">
               <Button variant="text" onClick={() => { setStep("details"); setError(null); }}>Back</Button>
