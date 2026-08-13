@@ -104,15 +104,19 @@ def _normalize_e164(raw: str) -> str:
     return n
 
 
-def _dialed_number(ctx: JobContext) -> str | None:
+def _dialed_number(participant) -> str | None:
     """The number the caller dialed, from the SIP participant's attributes.
 
-    LiveKit exposes inbound SIP metadata as participant attributes. Attribute
-    naming has shifted across LiveKit versions, so several known spellings are
-    tried rather than pinning to one and breaking silently on upgrade.
+    Takes an already-joined participant rather than the JobContext: attributes
+    only exist once the participant has actually connected. Reading
+    ctx.room.remote_participants at entrypoint start always found it empty, so
+    every call silently fell back to DEV_FALLBACK_TENANT_NUMBER.
+
+    Attribute naming has shifted across LiveKit versions, so several known
+    spellings are tried rather than pinning to one and breaking on upgrade.
     """
-    for participant in ctx.room.remote_participants.values():
-        attrs = getattr(participant, "attributes", None) or {}
+    attrs = getattr(participant, "attributes", None) or {}
+    if True:
         for key in ("sip.trunkPhoneNumber", "sip.dialedNumber", "sip.to", "sip.toNumber"):
             value = attrs.get(key)
             # isinstance, not truthiness: `agent.py console` supplies a
@@ -282,7 +286,16 @@ async def entrypoint(ctx: JobContext) -> None:
     http = aiohttp.ClientSession()
     ctx.add_shutdown_callback(http.close)
 
-    dialed = _dialed_number(ctx)
+    # Connect and wait for the caller before touching attributes - they do not
+    # exist until the participant has joined. Also required so the job
+    # finalises properly; without it LiveKit logs "completed without
+    # establishing a connection".
+    await ctx.connect()
+    participant = await ctx.wait_for_participant()
+    logger.info("participant joined: %s attrs=%s", participant.identity,
+                dict(getattr(participant, "attributes", {}) or {}))
+
+    dialed = _dialed_number(participant)
     if not dialed and DEV_FALLBACK_TENANT_NUMBER:
         # `agent.py console` has no SIP participant. Only reachable when the
         # fallback is explicitly configured, so production can never silently
@@ -311,4 +324,7 @@ async def entrypoint(ctx: JobContext) -> None:
 
 
 if __name__ == "__main__":
-    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint))
+    # agent_name must match the dispatch rule's RoomAgentDispatch exactly.
+    # Without it the worker uses default dispatch, and a rule that names an
+    # agent will never match it - the call connects and nobody joins.
+    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint, agent_name="mybizcare-voice"))
