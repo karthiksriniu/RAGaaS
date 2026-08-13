@@ -79,7 +79,6 @@ const NAV_LINKS = [
   { href: "#trust", label: "Trust & privacy" },
   { href: "#industries", label: "Industries" },
   { href: "#contact", label: "Contact" },
-  { href: "/login", label: "Sign in" },
 ];
 
 export function MarketingSite() {
@@ -103,11 +102,20 @@ export function MarketingSite() {
             </a>
           ))}
         </nav>
-        <a href={SIGNUP}>
-          <Button variant="filled" size="small">
-            Sign up
-          </Button>
-        </a>
+        <div className="flex items-center gap-2">
+          {/* Straight to /app: an already-signed-in owner lands on their
+              dashboard, and anyone else is bounced to /login from there. */}
+          <a href="/app">
+            <Button variant="outlined" size="small">
+              Login
+            </Button>
+          </a>
+          <a href={SIGNUP}>
+            <Button variant="filled" size="small">
+              Sign up
+            </Button>
+          </a>
+        </div>
       </header>
 
       {/* Hero */}
