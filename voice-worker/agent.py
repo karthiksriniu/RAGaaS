@@ -175,15 +175,20 @@ class MyBizCareAgent(Agent):
             # dead air on a phone line.
             llm=sarvam.LLM(model="sarvam-105b", reasoning_effort=None, max_tokens=400),
             # target_language_code, not language_code - the installed plugin
-            # rejects the latter. pace/temperature match Sarvam's documented
-            # "IVR / Telephony" preset: slightly brisk and consistent, which
-            # reads as professional rather than chatty on a phone line.
+            # rejects the latter.
+            #
+            # Deliberately NOT Sarvam's "IVR / Telephony" preset (pace 1.1,
+            # temperature 0.4). That preset is tuned for menu prompts and
+            # announcements, and on a conversational agent it reads as flat and
+            # robotic. Slower to a natural speaking pace, and a much higher
+            # temperature so intonation actually varies between sentences
+            # instead of every line landing on the same contour.
             tts=sarvam.TTS(
                 target_language_code="en-IN",
                 model="bulbul:v3",
                 speaker="priya",
-                pace=1.1,
-                temperature=0.4,
+                pace=0.95,
+                temperature=0.8,
             ),
         )
         self._http = http

@@ -123,9 +123,9 @@ export default function BusinessDashboard() {
         className="flex items-center justify-between px-6 py-4"
         style={{ borderBottom: "1px solid var(--color-outline-variant)" }}
       >
-        <div className="flex items-center gap-3">
+        <div className="flex min-w-0 items-center gap-3">
           <Logo size={28} />
-          <span className="kw-title-medium">{me?.businessName}</span>
+          <span className="kw-title-medium truncate">{me?.businessName}</span>
         </div>
         <Button
           variant="outlined"
@@ -140,15 +140,17 @@ export default function BusinessDashboard() {
         </Button>
       </header>
 
-      <div className="mx-auto flex max-w-5xl gap-8 px-6 py-8">
-        <nav className="w-56 shrink-0">
+      <div className="mx-auto flex max-w-5xl gap-3 px-3 py-6 sm:gap-8 sm:px-6 sm:py-8">
+        <nav className="w-14 shrink-0 sm:w-56">
           {NAV.map((n) => {
             const active = section === n.id;
             return (
               <button
                 key={n.id}
                 onClick={() => setSection(n.id)}
-                className="mb-1 flex w-full items-center gap-3 rounded-lg px-3 py-2 text-left"
+                title={n.label}
+                aria-label={n.label}
+                className="mb-1 flex w-full items-center justify-center gap-3 rounded-lg px-3 py-3 text-left sm:justify-start sm:py-2"
                 style={{
                   background: active ? "var(--color-secondary-container)" : "transparent",
                   color: active ? "var(--color-on-secondary-container)" : "var(--color-on-surface-variant)",
@@ -158,7 +160,7 @@ export default function BusinessDashboard() {
                 }}
               >
                 <span className="material-symbols-rounded" style={{ fontSize: 20 }}>{n.icon}</span>
-                {n.label}
+                <span className="hidden sm:inline">{n.label}</span>
               </button>
             );
           })}
@@ -224,7 +226,7 @@ export default function BusinessDashboard() {
                   Nothing uploaded yet.
                 </p>
               ) : (
-                <Card variant="outlined" padding={0}>
+                <Card variant="outlined" padding={0} style={{ overflow: "hidden" }}>
                   {sources.map((s, i) => (
                     <div key={s.source_uri} style={{ borderTop: i === 0 ? "none" : "1px solid var(--color-outline-variant)" }}>
                       <ListItem

@@ -50,7 +50,7 @@ export default function BusinessLogin() {
   }
 
   return (
-    <div className="flex min-h-screen flex-col items-center px-4 py-16" style={{ background: "var(--color-surface)" }}>
+    <div className="flex min-h-screen flex-col items-center px-4 py-8 sm:py-16" style={{ background: "var(--color-surface)" }}>
       <div className="mb-8 flex items-center gap-3">
         <Logo size={32} />
         <span className="kw-title-medium" style={{ color: "var(--color-on-surface)" }}>MyBizCare</span>
