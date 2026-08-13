@@ -329,7 +329,14 @@ async def entrypoint(ctx: JobContext) -> None:
     # finalises properly; without it LiveKit logs "completed without
     # establishing a connection".
     await ctx.connect()
-    participant = await ctx.wait_for_participant()
+    try:
+        participant = await ctx.wait_for_participant()
+    except RuntimeError as err:
+        # "room disconnected while waiting for participant" - the caller hung
+        # up during ringing. An ordinary outcome, not an error worth a
+        # traceback, and there is nothing left to serve.
+        logger.info("caller left before connecting (%s); ending job", err)
+        return
     logger.info("participant joined: %s attrs=%s", participant.identity,
                 dict(getattr(participant, "attributes", {}) or {}))
 
@@ -369,4 +376,16 @@ if __name__ == "__main__":
     # agent_name must match the dispatch rule's RoomAgentDispatch exactly.
     # Without it the worker uses default dispatch, and a rule that names an
     # agent will never match it - the call connects and nobody joins.
-    cli.run_app(WorkerOptions(entrypoint_fnc=entrypoint, agent_name="mybizcare-voice"))
+    cli.run_app(
+        WorkerOptions(
+            entrypoint_fnc=entrypoint,
+            agent_name="mybizcare-voice",
+            # num_idle_processes defaults to FOUR in production. Each prewarmed
+            # process loads the Silero VAD model, so on a small container they
+            # starve the process actually serving the call: the event loop
+            # stalls for seconds, LiveKit's watchdog sees no heartbeat, and
+            # kills the job mid-call ("process is unresponsive" -> exit -10).
+            # One spare is enough to keep answer latency low.
+            num_idle_processes=1,
+        )
+    )
