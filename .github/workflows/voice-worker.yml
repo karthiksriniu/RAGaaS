@@ -1,0 +1,57 @@
+# Builds the voice-worker container and publishes it to GitHub Container
+# Registry, where Lightsail pulls it from.
+#
+# Built here rather than locally because the dev machine has neither Docker nor
+# the AWS CLI, and Lightsail's own `push-container-image` path requires both.
+# Pulling from a public registry needs neither.
+#
+# The image contains NO secrets - every credential is injected by Lightsail as
+# an environment variable at deploy time - so the package can safely be public,
+# which is what lets Lightsail pull it without registry credentials.
+
+name: voice-worker image
+
+on:
+  push:
+    branches: [staging, main]
+    # Only when the worker itself changes; app-only commits shouldn't rebuild.
+    paths:
+      - "voice-worker/**"
+      - ".github/workflows/voice-worker.yml"
+  workflow_dispatch: {}
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./voice-worker
+          push: true
+          # linux/amd64 explicitly: Lightsail containers are x86, and a build
+          # host that ever defaults to arm64 would produce an image that fails
+          # to start there with an unhelpful "exec format error".
+          platforms: linux/amd64
+          tags: |
+            ghcr.io/${{ github.repository_owner }}/mybizcare-voice-worker:latest
+            ghcr.io/${{ github.repository_owner }}/mybizcare-voice-worker:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
+
+      - name: Image published
+        run: |
+          echo "ghcr.io/${{ github.repository_owner }}/mybizcare-voice-worker:latest"
+          echo "Make the package PUBLIC once (GitHub -> Packages -> Package settings)"
