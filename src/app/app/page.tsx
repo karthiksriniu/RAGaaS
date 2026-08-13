@@ -21,6 +21,8 @@ interface Me {
   description: string | null;
   voicePhoneNumber: string | null;
   answerConfigMd: string | null;
+  voicePreset: string;
+  voicePresets: { id: string; label: string; description: string }[];
 }
 
 interface Source {
@@ -43,6 +45,7 @@ export default function BusinessDashboard() {
 
   const [name, setName] = useState("");
   const [answerConfig, setAnswerConfig] = useState("");
+  const [voicePreset, setVoicePreset] = useState("");
   const [saved, setSaved] = useState<string | null>(null);
 
   const [sources, setSources] = useState<Source[]>([]);
@@ -57,6 +60,7 @@ export default function BusinessDashboard() {
     setMe(d);
     setName(d.businessName);
     setAnswerConfig(d.answerConfigMd || "");
+    setVoicePreset(d.voicePreset);
     setLoading(false);
   }
 
@@ -254,9 +258,49 @@ export default function BusinessDashboard() {
             <>
               <h1 className="kw-headline-small mb-1">Configurations</h1>
               <p className="kw-body-medium mb-4" style={{ color: "var(--color-on-surface-variant)" }}>
-                How your agent should answer — tone, length, what to avoid. Plain text or Markdown.
+                How your agent sounds, and how it answers.
               </p>
+
+              <Card variant="outlined" padding={24} className="mb-6">
+                <p className="kw-title-medium mb-1">Voice</p>
+                <p className="kw-body-small mb-4" style={{ color: "var(--color-on-surface-variant)" }}>
+                  Takes effect on your next call.
+                </p>
+                <div className="flex flex-col gap-2">
+                  {(me?.voicePresets || []).map((p) => {
+                    const active = voicePreset === p.id;
+                    return (
+                      <button
+                        key={p.id}
+                        onClick={() => { setVoicePreset(p.id); save({ voicePreset: p.id }, "voice"); }}
+                        className="flex items-start gap-3 rounded-lg p-3 text-left"
+                        style={{
+                          background: active ? "var(--color-secondary-container)" : "transparent",
+                          border: `1px solid ${active ? "var(--color-secondary-container)" : "var(--color-outline-variant)"}`,
+                          color: active ? "var(--color-on-secondary-container)" : "var(--color-on-surface)",
+                        }}
+                      >
+                        <span className="material-symbols-rounded" style={{ fontSize: 20 }}>
+                          {active ? "radio_button_checked" : "radio_button_unchecked"}
+                        </span>
+                        <span className="min-w-0">
+                          <span className="kw-title-small block">{p.label}</span>
+                          <span className="kw-body-small block" style={{ opacity: 0.8 }}>{p.description}</span>
+                        </span>
+                      </button>
+                    );
+                  })}
+                </div>
+                {saved === "voice" && (
+                  <p className="kw-body-small mt-3" style={{ color: "var(--color-primary)" }}>Voice updated</p>
+                )}
+              </Card>
+
               <Card variant="outlined" padding={24}>
+                <p className="kw-title-medium mb-1">Answer style</p>
+                <p className="kw-body-small mb-4" style={{ color: "var(--color-on-surface-variant)" }}>
+                  Tone, length, what to avoid. Plain text or Markdown.
+                </p>
                 <Textarea
                   label="Answer style"
                   value={answerConfig}

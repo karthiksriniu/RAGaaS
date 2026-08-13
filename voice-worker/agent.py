@@ -64,11 +64,19 @@ SESSION_TIMEOUT_S = 5.0
 class TenantContext:
     """Everything about the tenant whose number was dialed."""
 
-    def __init__(self, tenant_id: str, business_name: str, greeting: str, instructions: str):
+    def __init__(self, tenant_id: str, business_name: str, greeting: str, instructions: str,
+                 voice: dict | None = None):
         self.tenant_id = tenant_id
         self.business_name = business_name
         self.greeting = greeting
         self.instructions = instructions
+        # Speaker and delivery come from the tenant's chosen preset, resolved
+        # server-side. Defaults here only cover an older app deployment that
+        # doesn't send them yet.
+        v = voice or {}
+        self.speaker: str = v.get("speaker") or "priya"
+        self.pace: float = float(v.get("pace") or 0.95)
+        self.temperature: float = float(v.get("temperature") or 0.8)
 
 
 def _normalize_e164(raw: str) -> str:
@@ -156,6 +164,7 @@ async def _fetch_tenant(http: aiohttp.ClientSession, dialed: str) -> TenantConte
         business_name=data["businessName"],
         greeting=data["greeting"],
         instructions=data["instructions"],
+        voice=data.get("voice"),
     )
 
 
@@ -177,18 +186,20 @@ class MyBizCareAgent(Agent):
             # target_language_code, not language_code - the installed plugin
             # rejects the latter.
             #
+            # Speaker and delivery come from the tenant's voice preset via
+            # /api/voice/session, so a business changing its voice in the
+            # dashboard takes effect on its next call with no redeploy here.
+            #
             # Deliberately NOT Sarvam's "IVR / Telephony" preset (pace 1.1,
-            # temperature 0.4). That preset is tuned for menu prompts and
-            # announcements, and on a conversational agent it reads as flat and
-            # robotic. Slower to a natural speaking pace, and a much higher
-            # temperature so intonation actually varies between sentences
-            # instead of every line landing on the same contour.
+            # temperature 0.4) - that is tuned for menu prompts, and on a
+            # conversational agent every sentence lands on the same flat
+            # contour.
             tts=sarvam.TTS(
                 target_language_code="en-IN",
                 model="bulbul:v3",
-                speaker="priya",
-                pace=0.95,
-                temperature=0.8,
+                speaker=tenant.speaker,
+                pace=tenant.pace,
+                temperature=tenant.temperature,
             ),
         )
         self._http = http
@@ -316,7 +327,8 @@ async def entrypoint(ctx: JobContext) -> None:
         logger.error("could not resolve tenant for room %s (dialed=%s); ending", ctx.room.name, dialed)
         return
 
-    logger.info("call started: room=%s tenant=%s dialed=%s", ctx.room.name, tenant.tenant_id, dialed)
+    logger.info("call started: room=%s tenant=%s dialed=%s voice=%s pace=%s temp=%s",
+                ctx.room.name, tenant.tenant_id, dialed, tenant.speaker, tenant.pace, tenant.temperature)
 
     session = AgentSession(
         # Turn-taking delegated to the Sarvam STT plugin; 70ms matches its

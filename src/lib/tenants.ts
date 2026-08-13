@@ -21,6 +21,8 @@ export interface Tenant {
   answerConfigMd: string | null;
   /** E.164 number customers dial to reach this tenant's voice agent. */
   voicePhoneNumber: string | null;
+  /** Named voice preset id; null uses the default. See voicePresets.ts. */
+  voicePreset: string | null;
   licenseExpiresAt: string | null;
   archivedAt: string | null;
   createdAt: string;
@@ -63,6 +65,7 @@ interface TenantRow {
   twilio_auth_token: string | null;
   answer_config_md: string | null;
   voice_phone_number: string | null;
+  voice_preset: string | null;
   license_expires_at: string | null;
   archived_at: string | null;
   created_at: string;
@@ -83,6 +86,7 @@ function mapRow(row: TenantRow): Tenant {
     hasCustomTwilioAuthToken: !!row.twilio_auth_token,
     answerConfigMd: row.answer_config_md,
     voicePhoneNumber: row.voice_phone_number,
+    voicePreset: row.voice_preset,
     licenseExpiresAt: row.license_expires_at,
     archivedAt: row.archived_at,
     createdAt: row.created_at,

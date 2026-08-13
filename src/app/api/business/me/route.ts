@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { pool } from "@/lib/db";
 import { businessTenantId } from "@/lib/businessAuth";
 import { assertTenantExists, TenantNotFoundError, updateTenantAnswerConfig } from "@/lib/tenants";
+import { VOICE_PRESETS, DEFAULT_VOICE_PRESET_ID } from "@/lib/voicePresets";
 
 export const runtime = "nodejs";
 
@@ -30,6 +31,8 @@ export async function GET(req: NextRequest) {
       description: desc.rows[0]?.business_description ?? null,
       voicePhoneNumber: tenant.voicePhoneNumber,
       answerConfigMd: tenant.answerConfigMd,
+      voicePreset: tenant.voicePreset ?? DEFAULT_VOICE_PRESET_ID,
+      voicePresets: VOICE_PRESETS.map((p) => ({ id: p.id, label: p.label, description: p.description })),
     });
   } catch (err) {
     if (err instanceof TenantNotFoundError) return NextResponse.json({ error: err.message }, { status: 404 });
@@ -51,6 +54,16 @@ export async function PATCH(req: NextRequest) {
       return NextResponse.json({ error: "Business name must be 2-80 characters" }, { status: 400 });
     }
     await pool.query("UPDATE tenants SET name = $2 WHERE id = $1", [tenantId, name]);
+  }
+
+  if (typeof body.voicePreset === "string") {
+    // Reject unknown ids rather than storing them: resolveVoicePreset would
+    // silently fall back, leaving the dashboard showing a voice the caller
+    // never hears.
+    if (!VOICE_PRESETS.some((p) => p.id === body.voicePreset)) {
+      return NextResponse.json({ error: "Unknown voice preset" }, { status: 400 });
+    }
+    await pool.query("UPDATE tenants SET voice_preset = $2 WHERE id = $1", [tenantId, body.voicePreset]);
   }
 
   if (body.answerConfigMd !== undefined) {

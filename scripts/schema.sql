@@ -161,3 +161,9 @@ begin
     grant select, insert, update, delete on phone_number_pool to app_runtime;
   end if;
 end $$;
+
+-- Which named voice preset this tenant's agent speaks with (see
+-- src/lib/voicePresets.ts). Stored as the preset id rather than the raw
+-- speaker/pace/temperature so the tuned pairings can be adjusted centrally
+-- without migrating every tenant's numbers. Null means the default preset.
+alter table tenants add column if not exists voice_preset text;

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { timingSafeEqual } from "node:crypto";
 import { getTenantByVoiceNumber } from "@/lib/tenants";
 import { buildVoiceInstructions, buildVoiceGreeting } from "@/lib/voicePrompt";
+import { resolveVoicePreset } from "@/lib/voicePresets";
 
 export const runtime = "nodejs";
 
@@ -72,10 +73,15 @@ export async function POST(req: NextRequest) {
     );
   }
 
+  // Voice settings travel with the session, so changing a business's voice in
+  // the dashboard takes effect on its NEXT call - no worker redeploy.
+  const voice = resolveVoicePreset(tenant.voicePreset);
+
   return NextResponse.json({
     tenantId: tenant.id,
     businessName: tenant.name,
     greeting: buildVoiceGreeting(tenant.name),
     instructions: buildVoiceInstructions(tenant.name, tenant.answerConfigMd),
+    voice: { speaker: voice.speaker, pace: voice.pace, temperature: voice.temperature },
   });
 }
