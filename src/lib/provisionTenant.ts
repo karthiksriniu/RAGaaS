@@ -30,6 +30,18 @@ export async function deriveTenantId(businessName: string): Promise<string> {
   throw new Error(`Could not derive a free tenant id from "${businessName}"`);
 }
 
+/** DEMO ONLY. When the pool has no free number, hand the new tenant the
+ * longest-held one, taking it away from whoever has it.
+ *
+ * This exists because numbers cost real money and the demo phase needs more
+ * signups than numbers. It is destructive: the previous tenant's phone line
+ * stops working with no warning to them, and their callers reach a different
+ * business. That is acceptable for prospect demos and NEVER acceptable once
+ * signups are real, so it is off unless explicitly switched on. */
+function recyclingEnabled(): boolean {
+  return process.env.NUMBER_POOL_RECYCLE === "true";
+}
+
 /** Claims a free number from the pre-bought pool.
  *
  * The UPDATE ... WHERE tenant_id IS NULL is what makes this safe: two
@@ -53,8 +65,63 @@ export async function claimPooledNumber(tenantId: string): Promise<string | null
   const e164 = res.rows[0]?.e164 ?? null;
   if (e164) {
     await pool.query("UPDATE tenants SET voice_phone_number = $2 WHERE id = $1", [tenantId, e164]);
+    return e164;
   }
-  return e164;
+
+  if (!recyclingEnabled()) return null;
+  return recycleOldestNumber(tenantId);
+}
+
+/** Takes the least-recently-claimed number from its current holder.
+ *
+ * One transaction start to finish: the row is locked with FOR UPDATE before it
+ * is read, so two simultaneous signups cannot both reclaim the same number and
+ * leave one tenant silently without a line. Least-recently-claimed rather than
+ * random so the rotation is predictable - the two most recent signups always
+ * hold the numbers, which is exactly what a demo needs. */
+async function recycleOldestNumber(tenantId: string): Promise<string | null> {
+  const client = await pool.connect();
+  try {
+    await client.query("BEGIN");
+    const picked = await client.query<{ e164: string; tenant_id: string | null }>(
+      `SELECT e164, tenant_id FROM phone_number_pool
+        WHERE tenant_id IS NOT NULL AND tenant_id <> $1
+        ORDER BY claimed_at NULLS FIRST
+        FOR UPDATE SKIP LOCKED
+        LIMIT 1`,
+      [tenantId]
+    );
+    const row = picked.rows[0];
+    if (!row) {
+      await client.query("ROLLBACK");
+      return null;
+    }
+
+    // Clear the old holder FIRST. If anything below fails, the transaction
+    // rolls back whole - a number is never left pointing at two tenants, which
+    // would route one business's callers to another.
+    if (row.tenant_id) {
+      await client.query("UPDATE tenants SET voice_phone_number = NULL WHERE id = $1", [row.tenant_id]);
+    }
+    await client.query(
+      "UPDATE phone_number_pool SET tenant_id = $2, claimed_at = now() WHERE e164 = $1",
+      [row.e164, tenantId]
+    );
+    await client.query("UPDATE tenants SET voice_phone_number = $2 WHERE id = $1", [tenantId, row.e164]);
+    await client.query("COMMIT");
+
+    // Loud on purpose: someone lost their phone line.
+    console.warn(
+      `[number-pool] RECYCLED ${row.e164} from tenant "${row.tenant_id}" to "${tenantId}" - ` +
+        `the previous tenant no longer has a working number.`
+    );
+    return row.e164;
+  } catch (err) {
+    await client.query("ROLLBACK").catch(() => {});
+    throw err;
+  } finally {
+    client.release();
+  }
 }
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
