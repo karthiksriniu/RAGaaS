@@ -1,0 +1,29 @@
+# Fly.io deployment for the MyBizCare voice worker.
+#
+# Mumbai (bom) on purpose: every leg of a call is India-local — the caller, the
+# Vobiz trunk, and Sarvam's STT/LLM/TTS. Hosting the worker anywhere else adds
+# a round trip to every turn, and turn latency is what makes a voice agent feel
+# alive or broken.
+#
+# This is a WORKER, not a web service: it dials out to LiveKit and holds the
+# connection open. It serves no HTTP, so there are no [[services]] and no
+# health checks on a port.
+
+app = "mybizcare-voice-worker"
+primary_region = "bom"
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  MYBIZCARE_BASE_URL = "https://agriadvisor-poc-staging.vercel.app"
+
+# min_machines_running = 1 and auto_stop_machines = false are the whole point:
+# a scaled-to-zero worker means the phone line stops answering. This must stay
+# up even with no traffic, because inbound calls arrive unannounced.
+[[vm]]
+  size = "shared-cpu-1x"
+  memory = "1gb"
+
+[processes]
+  app = "python agent.py start"

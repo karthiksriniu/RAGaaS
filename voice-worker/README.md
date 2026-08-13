@@ -114,3 +114,48 @@ This is a spike. The questions it exists to answer:
 - **Untested against live infrastructure.** The code is written against the documented APIs and
   parses cleanly, but no one has run it against a real LiveKit project or SIP trunk yet — the dev
   machine has neither Docker nor Python 3.11. Expect to fix signature drift on the first run.
+
+## Deploying (Fly.io, Mumbai)
+
+The worker cannot run on Vercel: a call holds bidirectional audio plus WebSockets to Sarvam
+for minutes, which is a long-lived container, not a serverless function. Mumbai because every
+other leg of the call is India-local — caller, Vobiz trunk, and Sarvam's models — and any other
+region adds a round trip to every conversational turn.
+
+```bash
+brew install flyctl          # or: curl -L https://fly.io/install.sh | sh
+fly auth login
+cd app/voice-worker
+fly launch --no-deploy --copy-config --name mybizcare-voice-worker --region bom
+
+fly secrets set \
+  VOICE_WORKER_TOKEN=... \
+  LIVEKIT_URL=wss://<project>.livekit.cloud \
+  LIVEKIT_API_KEY=... \
+  LIVEKIT_API_SECRET=... \
+  SARVAM_API_KEY=sk_... \
+  EXPERT_PHONE_NUMBER=+91... \
+  SIP_TRUNK_HOSTNAME=<id>.sip.vobiz.ai \
+  SIP_AUTH_USERNAME=... \
+  SIP_AUTH_PASSWORD=...
+
+fly deploy
+fly logs        # expect "registered worker"
+```
+
+`MYBIZCARE_BASE_URL` is in `fly.toml` rather than a secret — it is a public URL, and keeping it
+in config makes it obvious which environment a deployment points at.
+
+**Do NOT set `DEV_FALLBACK_TENANT_NUMBER` in production.** It exists only for `agent.py console`,
+which has no SIP participant. In a real deployment it would make the worker answer as a tenant
+nobody dialled.
+
+### Scaling
+
+```bash
+fly scale count 1     # one machine is enough for early volume
+fly status
+```
+
+The worker must never scale to zero — inbound calls arrive unannounced, and a cold start
+means the caller hears nothing. `[[vm]]` plus a running count of 1 keeps it warm.

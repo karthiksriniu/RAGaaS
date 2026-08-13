@@ -20,6 +20,7 @@ from __future__ import annotations
 
 import logging
 import os
+import sys
 
 import aiohttp
 from dotenv import load_dotenv
@@ -46,9 +47,28 @@ load_dotenv()
 logger = logging.getLogger("mybizcare-voice")
 logger.setLevel(logging.INFO)
 
-BASE_URL = os.environ["MYBIZCARE_BASE_URL"].rstrip("/")
-VOICE_WORKER_TOKEN = os.environ["VOICE_WORKER_TOKEN"]
+# Read with .get(), NOT os.environ[...]: the Dockerfile runs
+# `python agent.py download-files` at BUILD time to pre-fetch the VAD weights,
+# and a build has no environment set. Indexing here made the image fail to
+# build. Validated at startup instead - see _require_env() - so a genuinely
+# missing variable still fails fast and loudly, just at run time.
+BASE_URL = os.getenv("MYBIZCARE_BASE_URL", "").rstrip("/")
+VOICE_WORKER_TOKEN = os.getenv("VOICE_WORKER_TOKEN", "")
 EXPERT_PHONE_NUMBER = os.getenv("EXPERT_PHONE_NUMBER", "")
+
+
+def _require_env() -> None:
+    """Fail fast on a misconfigured deployment, before any call is answered."""
+    missing = [
+        n for n in ("MYBIZCARE_BASE_URL", "VOICE_WORKER_TOKEN",
+                    "LIVEKIT_URL", "LIVEKIT_API_KEY", "LIVEKIT_API_SECRET",
+                    "SARVAM_API_KEY")
+        if not os.getenv(n)
+    ]
+    if missing:
+        raise RuntimeError(
+            "Missing required environment variables: " + ", ".join(missing)
+        )
 
 # Used only when the dialed number can't be determined — a console/dev session
 # has no SIP participant at all. Never relied on for real calls.
@@ -278,9 +298,11 @@ class MyBizCareAgent(Agent):
             await WarmTransferTask(
                 sip_call_to=EXPERT_PHONE_NUMBER,
                 sip_connection=SIPOutboundConfig(
-                    hostname=os.environ["SIP_TRUNK_HOSTNAME"],
-                    auth_username=os.environ["SIP_AUTH_USERNAME"],
-                    auth_password=os.environ["SIP_AUTH_PASSWORD"],
+                    # .get() so a deployment without transfer configured fails
+                    # this one tool gracefully rather than crashing the call.
+                    hostname=os.getenv("SIP_TRUNK_HOSTNAME", ""),
+                    auth_username=os.getenv("SIP_AUTH_USERNAME", ""),
+                    auth_password=os.getenv("SIP_AUTH_PASSWORD", ""),
                 ),
                 # Handing over the transcript is what makes this warm rather
                 # than merely connected: the expert hears the context before
@@ -341,6 +363,9 @@ async def entrypoint(ctx: JobContext) -> None:
 
 
 if __name__ == "__main__":
+    # download-files runs at image build with no env; everything else needs it.
+    if len(sys.argv) > 1 and sys.argv[1] != "download-files":
+        _require_env()
     # agent_name must match the dispatch rule's RoomAgentDispatch exactly.
     # Without it the worker uses default dispatch, and a rule that names an
     # agent will never match it - the call connects and nobody joins.
