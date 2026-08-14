@@ -228,6 +228,7 @@ export async function provisionTenant(
         tenantId,
         trimmed,
         `# About this business\n${trimmed}\n\n## Answer style\n- Keep answers short and practical; callers cannot skim.\n- Stay within what this business actually does. If asked about something unrelated, say so and offer to connect them to a person.`,
+        website,
       ]
     );
   } else {
