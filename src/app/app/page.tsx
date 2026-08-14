@@ -19,6 +19,7 @@ interface Me {
   subdomain: string;
   mobile: string | null;
   description: string | null;
+  website: string | null;
   voicePhoneNumber: string | null;
   answerConfigMd: string | null;
   voicePreset: string;
