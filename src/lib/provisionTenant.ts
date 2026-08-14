@@ -156,25 +156,27 @@ export async function generateStarterKb(
     "- Write what makes this business distinctive in ITS OWN terms - what it emphasises about itself, who it serves, what it is known for.",
     "- Do NOT name, compare against, or make claims about competitors. An agent repeating an unverified claim about another company to a caller is a real liability, and you cannot verify one. Positioning is fine; comparison is not.",
     "- Do not describe the business as best, cheapest, or number one unless the site says so and you attribute it to the business.",
+    "",
+    "ALWAYS open with a '## What we do' section: two or three plain sentences answering \"what does this business do?\" in the words a customer would use, not marketing language. Callers ask this more than anything else, and a document that only covers specific topics fails to answer it.",
   ].join("\n");
 
   const ask = site
-    ? `Business name: ${businessName}\nWhat they do: ${description || "(not given)"}\nWebsite: ${site}\n\nFetch the website and read enough of it to work from - the homepage plus obvious pages like services, pricing, about and FAQ. Then write the starter knowledge base, covering what they offer, what makes them distinctive, pricing if the site states it, how customers get started, and the questions customers most commonly ask.`
+    ? `Business name: ${businessName}\nWhat they do: ${description || "(not given)"}\nWebsite: ${site}\n\nFetch the homepage, then at most three more pages - whichever of services, pricing, about or FAQ exist. Do not crawl further; work with what those give you. Then write the starter knowledge base, covering what they offer, what makes them distinctive, pricing if the site states it, how customers get started, and the questions customers most commonly ask.`
     : `Business name: ${businessName}\nWhat they do: ${description}\n\nWrite the starter knowledge base.`;
 
   const msg = await anthropic.messages.create({
     model: "claude-sonnet-5",
-    max_tokens: 8000,
+    max_tokens: 5000,
     system: rules,
     // Only offered when there is a site to read; without one the tools are
     // just latency and a chance to wander onto pages about other companies.
+    // web_fetch ONLY, and a tight budget. Two reasons: reading a large site
+    // with 8 fetches plus search took 237s, which is far too long to hold a
+    // signup screen; and web_search is what pulls in third-party pages about
+    // OTHER companies, which is exactly the content we do not want the agent
+    // repeating to callers. The business's own site is the source of truth.
     ...(site
-      ? {
-          tools: [
-            { type: "web_fetch_20260209" as const, name: "web_fetch", max_uses: 8 },
-            { type: "web_search_20260209" as const, name: "web_search", max_uses: 3 },
-          ],
-        }
+      ? { tools: [{ type: "web_fetch_20260209" as const, name: "web_fetch", max_uses: 4 }] }
       : {}),
     messages: [{ role: "user", content: ask }],
   });
