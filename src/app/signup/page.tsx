@@ -18,6 +18,7 @@ export default function SignupPage() {
   const [step, setStep] = useState<Step>("details");
   const [businessName, setBusinessName] = useState("");
   const [description, setDescription] = useState("");
+  const [website, setWebsite] = useState("");
   const [mobile, setMobile] = useState("");
   const [code, setCode] = useState("");
   const [devCode, setDevCode] = useState<string | null>(null);
@@ -77,7 +78,7 @@ export default function SignupPage() {
 
     setStep("provisioning");
     try {
-      const d = await post("/api/business/signup", { mobile, businessName, description });
+      const d = await post("/api/business/signup", { mobile, businessName, description, website });
       setResult({ phoneNumber: d.phoneNumber ?? null, tenantId: d.tenantId });
       setStep("done");
     } catch (e) {
@@ -108,8 +109,19 @@ export default function SignupPage() {
                 onChange={(e) => setDescription(e.target.value)}
                 rows={4}
               />
+            </div>
+            <div className="mt-4">
+              <TextField
+                fullWidth
+                label="Website (optional)"
+                value={website}
+                onChange={(e) => setWebsite(e.target.value)}
+                type="url"
+                placeholder="yourbusiness.com"
+              />
               <p className="kw-body-small mt-1" style={{ color: "var(--color-on-surface-variant)" }}>
-                We use this to give your agent a starting point, so it can answer from day one.
+                If you have a site, we&apos;ll read it and build your agent a much fuller starting
+                point — services, pricing, and the questions customers usually ask.
               </p>
             </div>
             <div className="mt-4">
@@ -213,7 +225,7 @@ export default function SignupPage() {
             <p className="kw-body-medium mt-2" style={{ color: "var(--color-on-surface-variant)" }}>
               {step === "paying" && "Please do not refresh or close this page."}
               {step === "paid" && `₹${PLAN_PRICE} received. Setting things up…`}
-              {step === "provisioning" && "Assigning your number and preparing your agent. This can take a moment."}
+              {step === "provisioning" && "Assigning your number and reading up on your business. This can take a minute."}
             </p>
           </Card>
         </div>

@@ -167,3 +167,7 @@ end $$;
 -- speaker/pace/temperature so the tuned pairings can be adjusted centrally
 -- without migrating every tenant's numbers. Null means the default preset.
 alter table tenants add column if not exists voice_preset text;
+
+-- Optional business website, captured at signup. Used to generate a far richer
+-- starter knowledge base than a one-line description can support.
+alter table tenants add column if not exists website_url text;

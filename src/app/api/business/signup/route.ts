@@ -12,7 +12,7 @@ import { checkRateLimit } from "@/lib/rateLimit";
 export const runtime = "nodejs";
 // Provisioning creates a tenant, claims a number and generates a starter KB
 // with an LLM call - comfortably longer than the default budget.
-export const maxDuration = 120;
+export const maxDuration = 300;
 
 /** Completes signup after the (bypassed) payment step: creates the tenant,
  * claims a pooled number, seeds the agent, and logs the owner in.
@@ -21,7 +21,7 @@ export const maxDuration = 120;
  * requiring the number to have no outstanding challenge AND not already own an
  * account - a caller who never verified would still hold a live challenge row. */
 export async function POST(req: NextRequest) {
-  const { mobile, businessName, description } = await req.json().catch(() => ({}));
+  const { mobile, businessName, description, website } = await req.json().catch(() => ({}));
   const normalized = normalizeMobile(mobile || "");
   const name = typeof businessName === "string" ? businessName.trim() : "";
 
@@ -30,6 +30,7 @@ export async function POST(req: NextRequest) {
   if (name.length > 80) return NextResponse.json({ error: "Business name is too long" }, { status: 400 });
 
   const desc = typeof description === "string" ? description.trim().slice(0, 1000) : "";
+  const site = typeof website === "string" ? website.trim().slice(0, 300) : "";
 
   if (!(await checkRateLimit(`signup:${normalized}`, 60 * 60 * 1000, 5))) {
     return NextResponse.json({ error: "Too many signup attempts. Try again later." }, { status: 429 });
@@ -57,7 +58,7 @@ export async function POST(req: NextRequest) {
     return res;
   }
 
-  const provisioned = await provisionTenant(name, desc);
+  const provisioned = await provisionTenant(name, desc, site);
 
   await pool.query(
     "INSERT INTO business_accounts (id, mobile, tenant_id) VALUES ($1, $2, $3)",

@@ -19,8 +19,8 @@ export async function GET(req: NextRequest) {
       "SELECT mobile FROM business_accounts WHERE tenant_id = $1",
       [tenantId]
     );
-    const desc = await pool.query<{ business_description: string | null }>(
-      "SELECT business_description FROM tenants WHERE id = $1",
+    const desc = await pool.query<{ business_description: string | null; website_url: string | null }>(
+      "SELECT business_description, website_url FROM tenants WHERE id = $1",
       [tenantId]
     );
     return NextResponse.json({
@@ -29,6 +29,7 @@ export async function GET(req: NextRequest) {
       subdomain: tenant.subdomain,
       mobile: acct.rows[0]?.mobile ?? null,
       description: desc.rows[0]?.business_description ?? null,
+      website: desc.rows[0]?.website_url ?? null,
       voicePhoneNumber: tenant.voicePhoneNumber,
       answerConfigMd: tenant.answerConfigMd,
       voicePreset: tenant.voicePreset ?? DEFAULT_VOICE_PRESET_ID,

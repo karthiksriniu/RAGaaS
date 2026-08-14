@@ -18,6 +18,7 @@ tool only when it actually needs a fact.
 
 from __future__ import annotations
 
+import asyncio
 import logging
 import os
 import sys
@@ -55,6 +56,13 @@ logger.setLevel(logging.INFO)
 BASE_URL = os.getenv("MYBIZCARE_BASE_URL", "").rstrip("/")
 VOICE_WORKER_TOKEN = os.getenv("VOICE_WORKER_TOKEN", "")
 EXPERT_PHONE_NUMBER = os.getenv("EXPERT_PHONE_NUMBER", "")
+
+# How long a caller may be silent before the agent checks they are still there,
+# and how long after that check before the call is ended. Env-tunable because
+# the right pause differs by line: a support queue can afford to wait, a
+# high-volume sales line cannot.
+SILENCE_PROMPT_SECONDS = float(os.getenv("SILENCE_PROMPT_SECONDS", "10"))
+SILENCE_HANGUP_SECONDS = float(os.getenv("SILENCE_HANGUP_SECONDS", "8"))
 
 
 def _require_env() -> None:
@@ -365,7 +373,50 @@ async def entrypoint(ctx: JobContext) -> None:
         # before the agent starts speaking.
         turn_detection="stt",
         min_endpointing_delay=0.07,
+        # Marks the caller "away" after this much silence. The default is 15s,
+        # which leaves a caller listening to nothing for an uncomfortably long
+        # time before anyone checks on them.
+        user_away_timeout=SILENCE_PROMPT_SECONDS,
     )
+
+    # Silence handling cannot live in the prompt: the model only ever sees
+    # turns that happened, so it has no way to notice that nothing did. The
+    # session emits "away" after user_away_timeout of silence; we nudge once,
+    # give the caller SILENCE_HANGUP_SECONDS to answer, then hang up rather
+    # than leaving a dead line open (which bills for the whole time).
+    silence_timer: asyncio.Task | None = None
+
+    async def _hang_up_if_still_silent() -> None:
+        try:
+            await asyncio.sleep(SILENCE_HANGUP_SECONDS)
+        except asyncio.CancelledError:
+            return  # caller spoke; cancelled by the listening/speaking branch
+        logger.info("caller silent after nudge; ending call")
+        try:
+            # A brief sign-off first, so the line does not simply go dead.
+            await session.say("I'll let you go for now. Do call back anytime.")
+        except Exception:
+            pass
+        await ctx.delete_room()
+
+    @session.on("user_state_changed")
+    def _on_user_state(ev) -> None:
+        nonlocal silence_timer
+        if ev.new_state == "away":
+            logger.info("caller went quiet; checking in")
+            # generate_reply rather than say(): the check-in should sound like
+            # this agent, in this call's language, not a canned line.
+            session.generate_reply(
+                instructions="The caller has gone quiet. Check whether they are still there, in one short line."
+            )
+            if silence_timer is None or silence_timer.done():
+                silence_timer = asyncio.create_task(_hang_up_if_still_silent())
+        else:
+            # Any speech at all cancels the pending hangup.
+            if silence_timer and not silence_timer.done():
+                silence_timer.cancel()
+                silence_timer = None
+
     await session.start(agent=MyBizCareAgent(http, tenant), room=ctx.room)
 
 

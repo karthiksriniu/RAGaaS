@@ -2,6 +2,7 @@ import Anthropic from "@anthropic-ai/sdk";
 import { pool } from "@/lib/db";
 import { createTenant } from "@/lib/tenants";
 import { ingestText } from "@/lib/ingestText";
+import { normalizeWebsite } from "@/lib/websiteUrl";
 
 // Everything that happens after a business "pays": create its tenant, give it a
 // number, and make its agent useful on day one.
@@ -126,40 +127,66 @@ async function recycleOldestNumber(tenantId: string): Promise<string | null> {
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
-/** Writes a starter knowledge base from the business description, so the agent
- * can answer plausibly before the business has uploaded anything.
+/** Writes a starter knowledge base, from the business description and - when
+ * one is given - the business's own website.
  *
- * This content is INVENTED from general knowledge, not verified by the
- * business. It is therefore ingested under a clearly-labelled source name so
- * it is obvious in the Knowledge Sources list and can be deleted in one click
- * once real documents exist. */
+ * The website is read via Anthropic's SERVER-SIDE web_fetch/web_search tools
+ * rather than fetching it ourselves. That matters for two reasons: the fetch
+ * happens on Anthropic's infrastructure, so a user-supplied URL can never be
+ * used to probe our own network (SSRF), and we get extraction and redirect
+ * handling for free instead of hand-rolling an HTML parser.
+ *
+ * This content is INVENTED or SUMMARISED, not verified by the business. It is
+ * ingested under a clearly-labelled source name so it is obvious in the
+ * Knowledge Sources list and deletable in one click. */
 export async function generateStarterKb(
   businessName: string,
-  description: string
+  description: string,
+  websiteUrl?: string | null
 ): Promise<string> {
+  const site = normalizeWebsite(websiteUrl);
+
+  const rules = [
+    "You write starter knowledge-base documents for a business's customer-service AI agent.",
+    "Output GitHub-flavoured Markdown only: a short '## Section' per topic, with plain paragraphs or '- ' bullets underneath. No preamble, no closing remarks, no code fences.",
+    "",
+    "Everything you write will be spoken to real customers by an AI agent that treats it as fact. So:",
+    "- Anything taken from the business's own website - services, pricing, hours, policies, locations, guarantees - is good material. Prefer it over anything you infer.",
+    "- NEVER invent a specific you cannot support: no made-up prices, phone numbers, addresses, opening hours, staff names, or delivery times. If a topic needs such a specific and the site does not give it, write the guidance and say the customer will be told the detail by the business.",
+    "- Write what makes this business distinctive in ITS OWN terms - what it emphasises about itself, who it serves, what it is known for.",
+    "- Do NOT name, compare against, or make claims about competitors. An agent repeating an unverified claim about another company to a caller is a real liability, and you cannot verify one. Positioning is fine; comparison is not.",
+    "- Do not describe the business as best, cheapest, or number one unless the site says so and you attribute it to the business.",
+  ].join("\n");
+
+  const ask = site
+    ? `Business name: ${businessName}\nWhat they do: ${description || "(not given)"}\nWebsite: ${site}\n\nFetch the website and read enough of it to work from - the homepage plus obvious pages like services, pricing, about and FAQ. Then write the starter knowledge base, covering what they offer, what makes them distinctive, pricing if the site states it, how customers get started, and the questions customers most commonly ask.`
+    : `Business name: ${businessName}\nWhat they do: ${description}\n\nWrite the starter knowledge base.`;
+
   const msg = await anthropic.messages.create({
     model: "claude-sonnet-5",
-    max_tokens: 2000,
-    system:
-      "You write starter knowledge-base documents for a business's customer-service AI agent. " +
-      "Output GitHub-flavoured Markdown only: a short '## Section' per topic, with plain " +
-      "paragraphs or '- ' bullets underneath. No preamble, no closing remarks, no code fences.\n\n" +
-      "Cover only what is genuinely generic for this kind of business: what it does, the " +
-      "services or products customers ask about, common questions and their usual answers, and " +
-      "typical next steps. NEVER invent specifics you cannot know - no prices, phone numbers, " +
-      "addresses, opening hours, staff names, policies, or delivery times. If a topic needs " +
-      "such a specific, write the guidance and say the customer will be told the detail by the " +
-      "business.",
-    messages: [
-      {
-        role: "user",
-        content: `Business name: ${businessName}\nWhat they do: ${description}\n\nWrite the starter knowledge base.`,
-      },
-    ],
+    max_tokens: 8000,
+    system: rules,
+    // Only offered when there is a site to read; without one the tools are
+    // just latency and a chance to wander onto pages about other companies.
+    ...(site
+      ? {
+          tools: [
+            { type: "web_fetch_20260209" as const, name: "web_fetch", max_uses: 8 },
+            { type: "web_search_20260209" as const, name: "web_search", max_uses: 3 },
+          ],
+        }
+      : {}),
+    messages: [{ role: "user", content: ask }],
   });
 
-  const block = msg.content.find((b): b is Anthropic.TextBlock => b.type === "text");
-  return block?.text?.trim() || "";
+  // With server tools the reply is interleaved text and tool-result blocks;
+  // take every text block, not just the first, or the document is truncated
+  // at the first fetch.
+  return msg.content
+    .filter((b): b is Anthropic.TextBlock => b.type === "text")
+    .map((b) => b.text)
+    .join("\n\n")
+    .trim();
 }
 
 export interface ProvisionResult {
@@ -177,8 +204,10 @@ export interface ProvisionResult {
  * better outcome than a failed signup. */
 export async function provisionTenant(
   businessName: string,
-  description: string
+  description: string,
+  websiteUrl?: string | null
 ): Promise<ProvisionResult> {
+  const website = normalizeWebsite(websiteUrl);
   const tenantId = await deriveTenantId(businessName);
 
   await createTenant({
@@ -194,7 +223,7 @@ export async function provisionTenant(
   const trimmed = description.trim();
   if (trimmed) {
     await pool.query(
-      "UPDATE tenants SET business_description = $2, answer_config_md = $3 WHERE id = $1",
+      "UPDATE tenants SET business_description = $2, answer_config_md = $3, website_url = $4 WHERE id = $1",
       [
         tenantId,
         trimmed,
@@ -202,15 +231,18 @@ export async function provisionTenant(
       ]
     );
   } else {
-    await pool.query("UPDATE tenants SET business_description = $2 WHERE id = $1", [tenantId, null]);
+    await pool.query(
+      "UPDATE tenants SET business_description = $2, website_url = $3 WHERE id = $1",
+      [tenantId, null, website]
+    );
   }
 
   const phoneNumber = await claimPooledNumber(tenantId);
 
   let starterKbChunks = 0;
-  if (trimmed) {
+  if (trimmed || website) {
     try {
-      const md = await generateStarterKb(businessName, trimmed);
+      const md = await generateStarterKb(businessName, trimmed, website);
       if (md) {
         const r = await ingestText(
           tenantId,
