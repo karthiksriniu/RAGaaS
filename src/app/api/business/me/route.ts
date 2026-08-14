@@ -19,8 +19,13 @@ export async function GET(req: NextRequest) {
       "SELECT mobile FROM business_accounts WHERE tenant_id = $1",
       [tenantId]
     );
-    const desc = await pool.query<{ business_description: string | null; website_url: string | null }>(
-      "SELECT business_description, website_url FROM tenants WHERE id = $1",
+    const desc = await pool.query<{
+      business_description: string | null;
+      website_url: string | null;
+      kb_enhancement_status: string | null;
+      kb_enhancement_error: string | null;
+    }>(
+      "SELECT business_description, website_url, kb_enhancement_status, kb_enhancement_error FROM tenants WHERE id = $1",
       [tenantId]
     );
     return NextResponse.json({
@@ -30,6 +35,8 @@ export async function GET(req: NextRequest) {
       mobile: acct.rows[0]?.mobile ?? null,
       description: desc.rows[0]?.business_description ?? null,
       website: desc.rows[0]?.website_url ?? null,
+      kbEnhancementStatus: desc.rows[0]?.kb_enhancement_status ?? null,
+      kbEnhancementError: desc.rows[0]?.kb_enhancement_error ?? null,
       voicePhoneNumber: tenant.voicePhoneNumber,
       answerConfigMd: tenant.answerConfigMd,
       voicePreset: tenant.voicePreset ?? DEFAULT_VOICE_PRESET_ID,

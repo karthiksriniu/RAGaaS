@@ -23,6 +23,8 @@ interface Me {
   answerConfigMd: string | null;
   voicePreset: string;
   voicePresets: { id: string; label: string; description: string }[];
+  kbEnhancementStatus: "pending" | "done" | "failed" | null;
+  kbEnhancementError: string | null;
 }
 
 interface Source {
@@ -74,6 +76,18 @@ export default function BusinessDashboard() {
     loadSources();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
+
+  // Only polls while the website read is actually in flight, and stops as soon
+  // as it settles - no standing timer on an idle dashboard.
+  useEffect(() => {
+    if (me?.kbEnhancementStatus !== "pending") return;
+    const t = setInterval(() => {
+      loadMe();
+      loadSources();
+    }, 8000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [me?.kbEnhancementStatus]);
 
   async function save(body: Record<string, unknown>, label: string) {
     await fetch("/api/business/me", {
@@ -224,6 +238,31 @@ export default function BusinessDashboard() {
                 onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(f); }}
               />
               {uploadError && <p className="kw-body-small mb-3" style={{ color: "var(--color-error)" }}>{uploadError}</p>}
+
+              {me?.kbEnhancementStatus === "pending" && (
+                <div
+                  className="mb-4 flex items-start gap-3 rounded-lg p-3"
+                  style={{ background: "var(--color-tertiary-container)", color: "var(--color-on-tertiary-container)" }}
+                >
+                  <ProgressIndicator variant="circular" size={16} thickness={2} />
+                  <span className="kw-body-small">
+                    Reading {me?.website || "your website"} to build a fuller starting point. Your
+                    agent already works — this will replace the starter document when it&apos;s done.
+                  </span>
+                </div>
+              )}
+
+              {me?.kbEnhancementStatus === "failed" && (
+                <div
+                  className="mb-4 rounded-lg p-3"
+                  style={{ background: "var(--color-error-container)", color: "var(--color-on-error-container)" }}
+                >
+                  <p className="kw-body-small">
+                    We couldn&apos;t read {me?.website || "your website"}, so your agent is using the
+                    shorter starter document. Uploading your own documents below works just as well.
+                  </p>
+                </div>
+              )}
 
               {sources.length === 0 ? (
                 <p className="kw-body-small" style={{ color: "var(--color-on-surface-variant)" }}>

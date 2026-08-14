@@ -85,7 +85,12 @@ DEV_FALLBACK_TENANT_NUMBER = os.getenv("DEV_FALLBACK_TENANT_NUMBER", "")
 # Retrieval sits inside the caller's turn latency, so it gets a tight timeout.
 # Better to apologise in three seconds than leave dead air on a phone line; the
 # tool returns an instruction to offer a transfer rather than inventing facts.
-RETRIEVE_TIMEOUT_S = 3.0
+# A cold call to /api/voice/retrieve measured 2.7s from a fast connection, and
+# the worker now runs in Mumbai calling a Vercel function - 3s left almost no
+# headroom, so an ordinary cold start read as "knowledge base unreachable"
+# mid-call. Long enough to absorb that, short enough that the caller is not
+# left in silence if the endpoint is genuinely down.
+RETRIEVE_TIMEOUT_S = 6.0
 SESSION_TIMEOUT_S = 5.0
 
 

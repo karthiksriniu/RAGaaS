@@ -191,10 +191,16 @@ export async function generateStarterKb(
     .trim();
 }
 
+/** One source name for both passes, so the website-informed document replaces
+ * the quick one instead of duplicating it. */
+export const STARTER_KB_SOURCE = "Starter knowledge (auto-generated)";
+
 export interface ProvisionResult {
   tenantId: string;
   phoneNumber: string | null;
   starterKbChunks: number;
+  /** Set when a website was given and still needs reading in the background. */
+  websiteToRead: string | null;
 }
 
 /** Creates the tenant, claims a number, seeds the agent's answer-style config
@@ -242,17 +248,15 @@ export async function provisionTenant(
 
   const phoneNumber = await claimPooledNumber(tenantId);
 
+  // The FAST pass only: name and description, no website. Reading a site takes
+  // 60-80s, which is far too long to hold someone on the provisioning screen,
+  // so it runs afterwards - see enhanceKbFromWebsite().
   let starterKbChunks = 0;
-  if (trimmed || website) {
+  if (trimmed) {
     try {
-      const md = await generateStarterKb(businessName, trimmed, website);
+      const md = await generateStarterKb(businessName, trimmed, null);
       if (md) {
-        const r = await ingestText(
-          tenantId,
-          "Starter knowledge (auto-generated)",
-          md,
-          "generated"
-        );
+        const r = await ingestText(tenantId, STARTER_KB_SOURCE, md, "generated");
         starterKbChunks = r.chunksIngested;
       }
     } catch (err) {
@@ -261,5 +265,51 @@ export async function provisionTenant(
     }
   }
 
-  return { tenantId, phoneNumber, starterKbChunks };
+  // Only mark work pending when there is actually a site to read, so the
+  // dashboard doesn't show "reading your website" to someone who gave none.
+  if (website) {
+    await pool.query("UPDATE tenants SET kb_enhancement_status = 'pending' WHERE id = $1", [tenantId]);
+  }
+
+  return { tenantId, phoneNumber, starterKbChunks, websiteToRead: website };
+}
+
+/** The SLOW pass: re-generate the starter KB from the business's own website.
+ *
+ * Runs after the signup response via after(), so the business is never held
+ * waiting on it. Writes to the SAME source name as the fast pass, so the
+ * richer document replaces the thin one rather than sitting alongside it -
+ * two overlapping documents about one business would compete in retrieval.
+ *
+ * Records its outcome on the tenant. A background failure is otherwise
+ * completely silent: the business would simply never receive the better KB and
+ * have no way to know, or to ask for it again. */
+export async function enhanceKbFromWebsite(
+  tenantId: string,
+  businessName: string,
+  description: string,
+  websiteUrl: string
+): Promise<void> {
+  try {
+    const md = await generateStarterKb(businessName, description, websiteUrl);
+    if (!md) throw new Error("the model returned nothing for this website");
+
+    const r = await ingestText(tenantId, STARTER_KB_SOURCE, md, "generated");
+    await pool.query(
+      "UPDATE tenants SET kb_enhancement_status = 'done', kb_enhancement_error = NULL WHERE id = $1",
+      [tenantId]
+    );
+    console.log(`[kb-enhance] ${tenantId}: ${r.chunksIngested} chunks from ${websiteUrl}`);
+  } catch (err) {
+    const message = err instanceof Error ? err.message : String(err);
+    console.error(`[kb-enhance] ${tenantId} FAILED:`, message);
+    // The fast-pass KB is untouched, so the agent still works - just with the
+    // thinner document.
+    await pool
+      .query(
+        "UPDATE tenants SET kb_enhancement_status = 'failed', kb_enhancement_error = $2 WHERE id = $1",
+        [tenantId, message.slice(0, 500)]
+      )
+      .catch(() => {});
+  }
 }

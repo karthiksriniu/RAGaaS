@@ -1,4 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
+import { after } from "next/server";
 import { pool } from "@/lib/db";
 import {
   BUSINESS_SESSION_COOKIE,
@@ -6,12 +7,15 @@ import {
   newAccountId,
   normalizeMobile,
 } from "@/lib/businessAuth";
-import { provisionTenant } from "@/lib/provisionTenant";
+import { provisionTenant, enhanceKbFromWebsite } from "@/lib/provisionTenant";
 import { checkRateLimit } from "@/lib/rateLimit";
 
 export const runtime = "nodejs";
 // Provisioning creates a tenant, claims a number and generates a starter KB
 // with an LLM call - comfortably longer than the default budget.
+// Covers the background website read scheduled with after(), not the response
+// itself - after() runs within the route's max duration, and signup now
+// answers in roughly 25s.
 export const maxDuration = 300;
 
 /** Completes signup after the (bypassed) payment step: creates the tenant,
@@ -60,6 +64,20 @@ export async function POST(req: NextRequest) {
 
   const provisioned = await provisionTenant(name, desc, site);
 
+  // Reading the business's website takes 60-80s. after() runs it once the
+  // response has been sent, so the business sees "You're live" immediately
+  // instead of watching a spinner for minutes.
+  //
+  // NOT durable: this is still the same invocation, so if the instance dies
+  // mid-read the work is lost. That is why the tenant carries a status - a
+  // stuck "pending" is visible and retryable, where a silent loss would not be.
+  if (provisioned.websiteToRead) {
+    const websiteToRead = provisioned.websiteToRead;
+    after(async () => {
+      await enhanceKbFromWebsite(provisioned.tenantId, name, desc, websiteToRead);
+    });
+  }
+
   await pool.query(
     "INSERT INTO business_accounts (id, mobile, tenant_id) VALUES ($1, $2, $3)",
     [newAccountId(), normalized, provisioned.tenantId]
@@ -70,6 +88,7 @@ export async function POST(req: NextRequest) {
     tenantId: provisioned.tenantId,
     phoneNumber: provisioned.phoneNumber,
     starterKbChunks: provisioned.starterKbChunks,
+    readingWebsite: !!provisioned.websiteToRead,
   });
   res.cookies.set(BUSINESS_SESSION_COOKIE, createBusinessSession(provisioned.tenantId), {
     httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: 60 * 60 * 24 * 30,

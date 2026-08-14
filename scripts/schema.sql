@@ -171,3 +171,14 @@ alter table tenants add column if not exists voice_preset text;
 -- Optional business website, captured at signup. Used to generate a far richer
 -- starter knowledge base than a one-line description can support.
 alter table tenants add column if not exists website_url text;
+
+-- Tracks the website-informed KB enhancement, which runs AFTER the signup
+-- response so the business isn't held on the provisioning screen for minutes.
+--   pending  - queued, running now in the background
+--   done     - website read and ingested
+--   failed   - see kb_enhancement_error; the business can retry
+--   null     - nothing to do (no website given)
+-- Needed because a background failure is otherwise invisible: without a status
+-- the business simply never receives the better KB and never learns why.
+alter table tenants add column if not exists kb_enhancement_status text;
+alter table tenants add column if not exists kb_enhancement_error text;
