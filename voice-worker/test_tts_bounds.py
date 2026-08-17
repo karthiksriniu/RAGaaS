@@ -18,6 +18,9 @@ src = inspect.getsource(tts_mod)
 m = re.search(r"min_buffer_size must be between (\d+) and (\d+)", src)
 lo, hi = (int(m.group(1)), int(m.group(2))) if m else (30, 200)
 
+presets_path = os.path.join(os.path.dirname(__file__), "..", "src", "lib", "voicePresets.ts")
+presets_src = open(presets_path).read() if os.path.exists(presets_path) else ""
+
 agent_src = open(os.path.join(os.path.dirname(__file__), "agent.py")).read() \
     if os.path.exists(os.path.join(os.path.dirname(__file__), "agent.py")) else ""
 used = re.search(r"min_buffer_size=(\d+)", agent_src)
@@ -44,6 +47,29 @@ for spk, pace, temp in [("priya",0.95,0.8),("simran",1.05,0.9),("ishita",0.9,0.6
                    min_buffer_size=int(used.group(1)) if used else 30)
     except Exception as e:
         failures.append(f"preset {spk}: {e}")
+
+# Sarvam API reference, bulbul:v3. The plugin does NOT validate these, so an
+# out-of-range preset value fails at the API during a live call rather than at
+# construction. pitch and loudness are deliberately absent: both are v2-only
+# and inert on v3, so setting them would be misleading rather than harmful.
+V3_RANGES = {"pace": (0.5, 2.0), "temperature": (0.01, 2.0)}
+V3_SAMPLE_RATES = {8000, 16000, 22050, 24000, 32000, 44100, 48000}
+
+sr = re.search(r"speech_sample_rate=(\d+)", agent_src)
+if sr and int(sr.group(1)) not in V3_SAMPLE_RATES:
+    failures.append(f"speech_sample_rate={sr.group(1)} not in {sorted(V3_SAMPLE_RATES)}")
+elif sr:
+    print(f"  speech_sample_rate={sr.group(1)} allowed")
+
+for field, (lo_, hi_) in V3_RANGES.items():
+    for val in re.findall(rf"{field}[:=]\s*([0-9.]+)", presets_src):
+        if not (lo_ <= float(val) <= hi_):
+            failures.append(f"preset {field}={val} outside bulbul:v3 range {lo_}-{hi_}")
+print(f"  all preset pace/temperature values inside bulbul:v3 ranges")
+
+for dead in ("pitch", "loudness"):
+    if re.search(rf"\b{dead}\s*=", agent_src):
+        failures.append(f"{dead} is set but is bulbul:v2-only - inert on v3, remove it")
 
 if failures:
     print("\nFAILED:"); [print("  -", f) for f in failures]; sys.exit(1)

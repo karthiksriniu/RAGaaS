@@ -238,6 +238,16 @@ class MyBizCareAgent(Agent):
                 # is pure added delay before the caller hears the first word.
                 # PCM starts playing as it arrives.
                 output_audio_codec="linear16",
+                # Sarvam's documented default for bulbul:v3, and better source
+                # material for the downsampling that happens on the way to the
+                # phone network than the plugin's 22050.
+                #
+                # Note pitch and loudness are NOT set: both are bulbul:v2-only
+                # per Sarvam's API reference, so on v3 they are silently
+                # inert - modulation on this model comes from temperature
+                # (set per voice preset) and from the punctuation the model
+                # writes, which the speech model follows exactly.
+                speech_sample_rate=24000,
                 # How much text to buffer before synthesis starts. The default
                 # 50 characters is most of a sentence - the caller waits for it
                 # every single turn. 30 is the plugin's documented FLOOR (it
