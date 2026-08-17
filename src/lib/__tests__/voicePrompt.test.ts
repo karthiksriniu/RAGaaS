@@ -35,10 +35,13 @@ describe("buildVoiceInstructions", () => {
     expect(p).toContain("no bracketed numbers");
   });
 
-  it("instructs the agent to use the retrieval tool rather than answer from memory", () => {
+  it("forbids answering factual questions from memory", () => {
     const p = buildVoiceInstructions("T", null);
+    // Retrieved context now arrives before the model replies, so the prompt
+    // points at that first; the tool remains the fallback for what it misses.
+    expect(p).toContain("Answer from it");
+    expect(p).toMatch(/never answer factual questions[^.]*from memory/i);
     expect(p).toContain("search_knowledge_base");
-    expect(p).toContain("Do not answer factual questions from memory");
   });
 
   it("instructs the agent to offer a human rather than invent an answer", () => {
