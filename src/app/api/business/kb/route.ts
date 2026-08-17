@@ -19,6 +19,13 @@ export const maxDuration = 120;
 // this should move to object storage instead.
 const MAX_UPLOAD_BYTES = 10_000_000;
 
+/** Same reasoning as businessAuth.mayRevealCode: Vercel reports
+ * NODE_ENV=production on staging too, so the root domain is what actually
+ * distinguishes the environments. */
+function mayRevealInternals(): boolean {
+  return (process.env.TENANT_ROOT_DOMAIN || "").startsWith("staging.");
+}
+
 // The business's own knowledge sources. Same ingest path as the platform-admin
 // route, but the tenant comes from the session cookie rather than the request,
 // so a business can only ever touch its own content.
@@ -76,8 +83,17 @@ export async function POST(req: NextRequest) {
       return NextResponse.json({ error: err.message }, { status: 400 });
     }
     console.error(`extraction failed for ${file.name}:`, err);
+    // The generic message is right for a business, but it hides why a whole
+    // FORMAT is failing rather than one bad file - which is a very different
+    // problem and invisible without the underlying error. Outside production
+    // the reason travels with the response so it can be diagnosed without
+    // digging through host logs.
+    const detail = err instanceof Error ? `${err.name}: ${err.message}` : String(err);
     return NextResponse.json(
-      { error: "We couldn't read that file. It may be password-protected or corrupted." },
+      {
+        error: "We couldn't read that file. It may be password-protected or corrupted.",
+        ...(mayRevealInternals() ? { detail: detail.slice(0, 400) } : {}),
+      },
       { status: 400 }
     );
   }
