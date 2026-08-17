@@ -240,9 +240,11 @@ class MyBizCareAgent(Agent):
                 output_audio_codec="linear16",
                 # How much text to buffer before synthesis starts. The default
                 # 50 characters is most of a sentence - the caller waits for it
-                # every single turn. 25 halves that wait while still giving the
-                # model enough words to get the prosody right.
-                min_buffer_size=25,
+                # every single turn. 30 is the plugin's documented FLOOR (it
+                # raises below that, which crashed every call when this was
+                # briefly set to 25), so this is as early as synthesis can
+                # legally start.
+                min_buffer_size=30,
             ),
         )
         self._http = http
