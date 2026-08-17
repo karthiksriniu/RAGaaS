@@ -91,11 +91,14 @@ def _check_context_pruning() -> list[str]:
     if "turn_ctx.items[:]" not in body:
         problems.append("on_user_turn_completed never prunes turn_ctx.items - "
                         "context accumulates every turn until the model stops answering")
-    marker = re.search(r'_CONTEXT_MARKER\s*=\s*"([^"]+)"', agent_src)
-    if not marker:
+    if not re.search(r'_CONTEXT_MARKER\s*=\s*"[^"]+"', agent_src):
         problems.append("_CONTEXT_MARKER not defined - injected blocks cannot be identified")
-    elif marker.group(1) not in body:
-        problems.append("injected block is not tagged with _CONTEXT_MARKER, so pruning cannot match it")
+    # The hook must both TAG the block it adds and FILTER on the same marker.
+    # Checking for the constant's name, not its value: the code interpolates the
+    # constant rather than repeating the literal, which is what we want.
+    elif body.count("_CONTEXT_MARKER") < 2:
+        problems.append("on_user_turn_completed must both tag the injected block and "
+                        "filter on _CONTEXT_MARKER; found fewer than two uses")
     return problems
 
 
