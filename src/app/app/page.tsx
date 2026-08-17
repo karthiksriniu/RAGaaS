@@ -32,6 +32,8 @@ interface Source {
   source_uri: string;
   source_type: string;
   chunk_count: number;
+  downloadable: boolean;
+  size_bytes: number | null;
 }
 
 const NAV: { id: Section; label: string; icon: string }[] = [
@@ -218,7 +220,8 @@ export default function BusinessDashboard() {
             <>
               <h1 className="kw-headline-small mb-1">Knowledge Sources</h1>
               <p className="kw-body-medium mb-4" style={{ color: "var(--color-on-surface-variant)" }}>
-                What your agent answers from. Upload Word documents — FAQs, policies, product notes.
+                What your agent answers from. Upload Word, PDF or Excel files — FAQs, policies,
+                price lists, product notes.
               </p>
               <div className="mb-6 flex items-center gap-3">
                 <Button variant="tonal" icon="upload_file" disabled={uploading} onClick={() => fileRef.current?.click()}>
@@ -234,7 +237,7 @@ export default function BusinessDashboard() {
               <input
                 ref={fileRef}
                 type="file"
-                accept=".docx"
+                accept=".docx,.pdf,.xlsx"
                 className="hidden"
                 onChange={(e) => { const f = e.target.files?.[0]; if (f) upload(f); }}
               />
@@ -274,17 +277,44 @@ export default function BusinessDashboard() {
                   {sources.map((s, i) => (
                     <div key={s.source_uri} style={{ borderTop: i === 0 ? "none" : "1px solid var(--color-outline-variant)" }}>
                       <ListItem
-                        leadingIcon={s.source_type === "generated" ? "auto_awesome" : "description"}
+                        leadingIcon={
+                          s.source_type === "generated"
+                            ? "auto_awesome"
+                            : s.source_type === "pdf"
+                              ? "picture_as_pdf"
+                              : s.source_type === "xlsx"
+                                ? "table_chart"
+                                : "description"
+                        }
                         headline={s.source_uri}
-                        supportingText={`${s.chunk_count} sections${s.source_type === "generated" ? " · created for you at signup" : ""}`}
+                        supportingText={
+                          `${s.chunk_count} sections` +
+                          (s.source_type === "generated" ? " · created for you at signup" : "") +
+                          (s.size_bytes ? ` · ${Math.max(1, Math.round(s.size_bytes / 1024))} KB` : "")
+                        }
                         trailing={
-                          <IconButton
-                            icon="delete"
-                            variant="standard"
-                            aria-label={`Delete ${s.source_uri}`}
-                            onClick={() => removeSource(s.source_uri)}
-                            style={{ color: "var(--color-error)" }}
-                          />
+                          <span className="flex items-center">
+                            {s.downloadable && (
+                              <IconButton
+                                icon="download"
+                                variant="standard"
+                                aria-label={`Download ${s.source_uri}`}
+                                onClick={() =>
+                                  window.open(
+                                    `/api/business/kb/download?sourceUri=${encodeURIComponent(s.source_uri)}`,
+                                    "_blank"
+                                  )
+                                }
+                              />
+                            )}
+                            <IconButton
+                              icon="delete"
+                              variant="standard"
+                              aria-label={`Delete ${s.source_uri}`}
+                              onClick={() => removeSource(s.source_uri)}
+                              style={{ color: "var(--color-error)" }}
+                            />
+                          </span>
                         }
                       />
                     </div>

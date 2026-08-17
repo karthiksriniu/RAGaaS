@@ -182,3 +182,29 @@ alter table tenants add column if not exists website_url text;
 -- the business simply never receives the better KB and never learns why.
 alter table tenants add column if not exists kb_enhancement_status text;
 alter table tenants add column if not exists kb_enhancement_error text;
+
+-- The uploaded file itself, kept so a business can download back what it gave
+-- us. Ingestion previously read the bytes, chunked them and discarded them, so
+-- "download my document" had nothing to serve.
+--
+-- Stored as bytea rather than object storage deliberately: knowledge-base
+-- documents are small (policies, price lists, FAQs) and this needs no new
+-- service, bucket, credential or SDK. Revisit if tenants start uploading tens
+-- of megabytes - at that point Supabase Storage is the right home and this
+-- table becomes a pointer.
+create table if not exists kb_files (
+  tenant_id text not null references tenants(id),
+  source_uri text not null,
+  mime_type text not null,
+  size_bytes integer not null,
+  content bytea not null,
+  uploaded_at timestamptz not null default now(),
+  primary key (tenant_id, source_uri)
+);
+
+do $$
+begin
+  if exists (select 1 from pg_roles where rolname = 'app_runtime') then
+    grant select, insert, update, delete on kb_files to app_runtime;
+  end if;
+end $$;
