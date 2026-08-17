@@ -74,3 +74,35 @@ for dead in ("pitch", "loudness"):
 if failures:
     print("\nFAILED:"); [print("  -", f) for f in failures]; sys.exit(1)
 print("  all six voice presets construct")
+
+
+# --- retrieved-context accumulation -----------------------------------------
+# The proactive lookup writes into the PERSISTENT chat context, so without
+# removing the previous turn's block the prompt grows by a full set of passages
+# every turn. The call works for a question or two and then goes quiet. Cheap to
+# assert, and invisible until someone is on the phone.
+def _check_context_pruning() -> list[str]:
+    problems = []
+    hook = re.search(r"async def on_user_turn_completed.*?(?=\n    async def |\n    @|\Z)",
+                     agent_src, re.S)
+    if not hook:
+        return ["on_user_turn_completed not found in agent.py"]
+    body = hook.group(0)
+    if "turn_ctx.items[:]" not in body:
+        problems.append("on_user_turn_completed never prunes turn_ctx.items - "
+                        "context accumulates every turn until the model stops answering")
+    marker = re.search(r'_CONTEXT_MARKER\s*=\s*"([^"]+)"', agent_src)
+    if not marker:
+        problems.append("_CONTEXT_MARKER not defined - injected blocks cannot be identified")
+    elif marker.group(1) not in body:
+        problems.append("injected block is not tagged with _CONTEXT_MARKER, so pruning cannot match it")
+    return problems
+
+
+ctx_problems = _check_context_pruning()
+if ctx_problems:
+    print("\nFAILED:")
+    for c in ctx_problems:
+        print("  -", c)
+    sys.exit(1)
+print("  retrieved context is pruned each turn")

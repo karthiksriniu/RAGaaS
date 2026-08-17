@@ -64,6 +64,11 @@ EXPERT_PHONE_NUMBER = os.getenv("EXPERT_PHONE_NUMBER", "")
 SILENCE_PROMPT_SECONDS = float(os.getenv("SILENCE_PROMPT_SECONDS", "10"))
 SILENCE_HANGUP_SECONDS = float(os.getenv("SILENCE_HANGUP_SECONDS", "8"))
 
+# Tags the retrieved-context message so each turn can remove the previous one.
+# Only ever sent to the model, never spoken, and the prompt tells it not to
+# describe its sources - so it does not leak to the caller.
+_CONTEXT_MARKER = "[kb-context]"
+
 
 def _require_env() -> None:
     """Fail fast on a misconfigured deployment, before any call is answered."""
@@ -307,11 +312,24 @@ class MyBizCareAgent(Agent):
         if not context:
             return
 
+        # Drop the previous turn's context before adding this one. turn_ctx is
+        # the PERSISTENT chat context, so appending each turn's passages without
+        # removing the last means every question carries all earlier lookups
+        # too. The prompt grows by a full context block per turn, and the model
+        # degrades into answering nothing at all - a call that works for the
+        # first question or two and then goes quiet.
+        turn_ctx.items[:] = [
+            item
+            for item in turn_ctx.items
+            if _CONTEXT_MARKER not in (getattr(item, "text_content", "") or "")
+        ]
+
         turn_ctx.add_message(
             role="assistant",
             content=(
-                "Information from this business's knowledge base that may answer "
-                f"the caller's question. Treat it as authoritative:\n\n{context}"
+                f"{_CONTEXT_MARKER} Information from this business's knowledge base "
+                "that may answer the caller's question. Treat it as authoritative:"
+                f"\n\n{context}"
             ),
         )
 
