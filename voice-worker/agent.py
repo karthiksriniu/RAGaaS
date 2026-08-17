@@ -233,6 +233,16 @@ class MyBizCareAgent(Agent):
                 speaker=tenant.speaker,
                 pace=tenant.pace,
                 temperature=tenant.temperature,
+                # linear16 (raw PCM) rather than the default mp3: MP3 has to
+                # accumulate and decode frames before any of it can play, which
+                # is pure added delay before the caller hears the first word.
+                # PCM starts playing as it arrives.
+                output_audio_codec="linear16",
+                # How much text to buffer before synthesis starts. The default
+                # 50 characters is most of a sentence - the caller waits for it
+                # every single turn. 25 halves that wait while still giving the
+                # model enough words to get the prosody right.
+                min_buffer_size=25,
             ),
         )
         self._http = http
@@ -378,6 +388,12 @@ async def entrypoint(ctx: JobContext) -> None:
         # before the agent starts speaking.
         turn_detection="stt",
         min_endpointing_delay=0.07,
+        # Starts generating on the partial transcript while the caller is still
+        # finishing, and discards the draft if they keep talking. This is what
+        # removes the dead pause between the caller stopping and the agent
+        # starting: the LLM turn (and any knowledge-base lookup it triggers)
+        # now overlaps the end of the caller's sentence instead of following it.
+        preemptive_generation=True,
         # Marks the caller "away" after this much silence. The default is 15s,
         # which leaves a caller listening to nothing for an uncomfortably long
         # time before anyone checks on them.

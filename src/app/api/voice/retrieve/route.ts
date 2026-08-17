@@ -8,6 +8,14 @@ import { NO_MATCH_THRESHOLD } from "@/lib/answerMode";
 
 export const runtime = "nodejs";
 
+// Co-located with Supabase (ap-northeast-1, Tokyo). This route runs on every
+// caller question, and withTenant issues four round trips per call (BEGIN,
+// set_config, the query, COMMIT). Executing in Virginia - the default - meant
+// each of those crossed the Pacific at ~180ms, roughly 700ms of the measured
+// 1.65s spent purely on geography. Next to the database they cost ~1ms each.
+export const preferredRegion = "hnd1";
+
+
 // Retrieval for the live voice pipeline (Phase A3). The LiveKit worker calls
 // this mid-call as its knowledge tool, then streams an answer itself - so this
 // deliberately returns CONTEXT, not a composed answer. answerQuestion.ts stays
