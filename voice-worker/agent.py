@@ -251,6 +251,58 @@ class MyBizCareAgent(Agent):
     async def on_enter(self) -> None:
         self.session.say(self._tenant.greeting)
 
+    async def _retrieve(self, question: str) -> str:
+        """The tenant's matching knowledge-base passages, or "" if none.
+
+        Shared by the proactive lookup in on_user_turn_completed and by the
+        search_knowledge_base tool, so the two can never drift into returning
+        different things for the same question. Raises on transport failure;
+        each caller decides what that means for its own path.
+        """
+        async with self._http.post(
+            f"{BASE_URL}/api/voice/retrieve",
+            json={"tenantId": self._tenant.tenant_id, "question": question},
+            headers={"Authorization": f"Bearer {VOICE_WORKER_TOKEN}"},
+            timeout=aiohttp.ClientTimeout(total=RETRIEVE_TIMEOUT_S),
+        ) as res:
+            if res.status != 200:
+                raise RuntimeError(f"retrieve returned {res.status}: {await res.text()}")
+            data = await res.json()
+        return (data.get("contextBlock") or "").strip()
+
+    async def on_user_turn_completed(self, turn_ctx, new_message) -> None:
+        """Look the caller's question up BEFORE the model replies.
+
+        Without this the agent needs two model round trips per answer: one to
+        decide it should search, then another to answer once the result comes
+        back - and no audio can start until both have finished. Retrieving here
+        collapses that to one, and because the model then streams text
+        immediately, the caller hears the first words far sooner.
+
+        Best-effort: a failed or empty lookup just means no context is added.
+        The tool below is still available for anything this does not cover, and
+        the call must never fail because retrieval did.
+        """
+        question = (new_message.text_content or "").strip()
+        if len(question) < 3:
+            return  # "yes", "ok" - nothing to look up
+
+        try:
+            context = await self._retrieve(question)
+        except Exception as err:
+            logger.warning("proactive retrieval failed: %s", err)
+            return
+        if not context:
+            return
+
+        turn_ctx.add_message(
+            role="assistant",
+            content=(
+                "Information from this business's knowledge base that may answer "
+                f"the caller's question. Treat it as authoritative:\n\n{context}"
+            ),
+        )
+
     @function_tool
     async def search_knowledge_base(self, ctx: RunContext, question: str) -> str:
         """Look up factual information about this business to answer the caller.
@@ -263,22 +315,12 @@ class MyBizCareAgent(Agent):
             "that right now and offer to transfer them to a person."
         )
         try:
-            async with self._http.post(
-                f"{BASE_URL}/api/voice/retrieve",
-                json={"tenantId": self._tenant.tenant_id, "question": question},
-                headers={"Authorization": f"Bearer {VOICE_WORKER_TOKEN}"},
-                timeout=aiohttp.ClientTimeout(total=RETRIEVE_TIMEOUT_S),
-            ) as res:
-                if res.status != 200:
-                    logger.warning("retrieve failed: %s %s", res.status, await res.text())
-                    return unavailable
-                data = await res.json()
+            context = await self._retrieve(question)
         except Exception:
             logger.exception("retrieve errored")
             return unavailable
 
-        context = data.get("contextBlock") or ""
-        if not context.strip():
+        if not context:
             return (
                 "No matching information was found. Tell the caller you don't have that "
                 "information and offer to transfer them to a person."
