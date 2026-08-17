@@ -8,12 +8,16 @@ import { NO_MATCH_THRESHOLD } from "@/lib/answerMode";
 
 export const runtime = "nodejs";
 
-// Co-located with Supabase (ap-northeast-1, Tokyo). This route runs on every
-// caller question, and withTenant issues four round trips per call (BEGIN,
-// set_config, the query, COMMIT). Executing in Virginia - the default - meant
-// each of those crossed the Pacific at ~180ms, roughly 700ms of the measured
-// 1.65s spent purely on geography. Next to the database they cost ~1ms each.
-export const preferredRegion = "hnd1";
+// NOTE ON LATENCY: this route runs on every caller question and is dominated by
+// distance, not compute - warm it measured 1.65s against 0.55s for a lookup
+// that does no embedding or vector search. Requests execute in Virginia while
+// Supabase is in Tokyo (ap-northeast-1), and withTenant makes four round trips
+// per call (BEGIN, set_config, query, COMMIT) at ~180ms each.
+//
+// `export const preferredRegion` does NOT fix this: Vercel only honours it for
+// the edge runtime, and this route needs pg and node:crypto. The region must be
+// set on the PROJECT (Vercel -> Settings -> Functions -> Region -> Tokyo), which
+// is why there is a comment here instead of a config line.
 
 
 // Retrieval for the live voice pipeline (Phase A3). The LiveKit worker calls
