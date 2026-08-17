@@ -69,6 +69,10 @@ SILENCE_HANGUP_SECONDS = float(os.getenv("SILENCE_HANGUP_SECONDS", "8"))
 # describe its sources - so it does not leak to the caller.
 _CONTEXT_MARKER = "[kb-context]"
 
+# Below this, a partial transcript is too vague to retrieve anything useful
+# ("what is the", "can you") and the lookup would only be thrown away.
+MIN_SPECULATIVE_CHARS = int(os.getenv("MIN_SPECULATIVE_CHARS", "12"))
+
 
 def _require_env() -> None:
     """Fail fast on a misconfigured deployment, before any call is answered."""
@@ -111,6 +115,11 @@ class TenantContext:
         # Speaker and delivery come from the tenant's chosen preset, resolved
         # server-side. Defaults here only cover an older app deployment that
         # doesn't send them yet.
+        # A knowledge-base lookup started from a partial transcript, so the
+        # ~0.7s round trip overlaps the caller still talking instead of being
+        # added on after they stop. Holds (query, task).
+        self._speculative: tuple[str, asyncio.Task[str]] | None = None
+
         v = voice or {}
         self.speaker: str = v.get("speaker") or "priya"
         self.pace: float = float(v.get("pace") or 0.95)
@@ -287,6 +296,56 @@ class MyBizCareAgent(Agent):
             data = await res.json()
         return (data.get("contextBlock") or "").strip()
 
+    def speculate(self, partial: str) -> None:
+        """Start looking up a partial transcript before the caller has finished.
+
+        Retrieval takes ~0.7s and used to sit entirely between the caller
+        stopping and the agent answering. Starting it on a partial transcript
+        moves most of that inside the time they are still speaking.
+
+        Cheap to be wrong: a discarded guess costs one embedding call, and
+        callers rarely reverse the sense of a sentence halfway through.
+        """
+        partial = (partial or "").strip()
+        if len(partial) < MIN_SPECULATIVE_CHARS:
+            return
+        if self._speculative and self._speculative[0] == partial:
+            return  # already looking this one up
+
+        self._cancel_speculative()
+        self._speculative = (partial, asyncio.create_task(self._retrieve(partial)))
+
+    def _cancel_speculative(self) -> None:
+        if self._speculative and not self._speculative[1].done():
+            self._speculative[1].cancel()
+        self._speculative = None
+
+    async def _retrieve_for_turn(self, question: str) -> str:
+        """The lookup for this turn, reusing a speculative one when it fits.
+
+        Reused only when the final transcript STARTS WITH the speculated text:
+        that means the caller carried on in the same direction, so the passages
+        found for the prefix are the passages for the whole. If they changed
+        tack, the guess is dropped and a fresh lookup runs - a wrong answer
+        served quickly is worse than a right one served slowly.
+        """
+        spec = self._speculative
+        self._speculative = None
+        if spec:
+            query, task = spec
+            if question.startswith(query):
+                try:
+                    context = await task
+                    logger.debug("used speculative retrieval (%d chars ahead)", len(question) - len(query))
+                    return context
+                except asyncio.CancelledError:
+                    pass
+                except Exception as err:
+                    logger.warning("speculative retrieval failed: %s", err)
+            elif not task.done():
+                task.cancel()
+        return await self._retrieve(question)
+
     async def on_user_turn_completed(self, turn_ctx, new_message) -> None:
         """Look the caller's question up BEFORE the model replies.
 
@@ -305,7 +364,7 @@ class MyBizCareAgent(Agent):
             return  # "yes", "ok" - nothing to look up
 
         try:
-            context = await self._retrieve(question)
+            context = await self._retrieve_for_turn(question)
         except Exception as err:
             logger.warning("proactive retrieval failed: %s", err)
             return
@@ -345,7 +404,7 @@ class MyBizCareAgent(Agent):
             "that right now and offer to transfer them to a person."
         )
         try:
-            context = await self._retrieve(question)
+            context = await self._retrieve_for_turn(question)
         except Exception:
             logger.exception("retrieve errored")
             return unavailable
@@ -460,12 +519,16 @@ async def entrypoint(ctx: JobContext) -> None:
         # before the agent starts speaking.
         turn_detection="stt",
         min_endpointing_delay=0.07,
-        # Starts generating on the partial transcript while the caller is still
-        # finishing, and discards the draft if they keep talking. This is what
-        # removes the dead pause between the caller stopping and the agent
-        # starting: the LLM turn (and any knowledge-base lookup it triggers)
-        # now overlaps the end of the caller's sentence instead of following it.
-        preemptive_generation=True,
+        # preemptive_generation is deliberately OFF. It speculatively generates
+        # a reply from the partial transcript, then keeps it only if the chat
+        # context is unchanged when the turn completes - see
+        # agent_activity._user_turn_completed_task, which cancels the draft and
+        # logs "chat context or tools have changed" otherwise. Injecting
+        # retrieved passages in on_user_turn_completed changes the context on
+        # EVERY turn, so the draft could never survive: it cost an extra LLM
+        # call per turn, and contended for CPU on a single-vCPU container, for
+        # nothing. Speculation happens on the RETRIEVAL instead (see
+        # MyBizCareAgent.speculate), which does not touch the chat context.
         # Marks the caller "away" after this much silence. The default is 15s,
         # which leaves a caller listening to nothing for an uncomfortably long
         # time before anyone checks on them.
@@ -510,7 +573,17 @@ async def entrypoint(ctx: JobContext) -> None:
                 silence_timer.cancel()
                 silence_timer = None
 
-    await session.start(agent=MyBizCareAgent(http, tenant), room=ctx.room)
+    agent = MyBizCareAgent(http, tenant)
+
+    # Kick the knowledge-base lookup off from partial transcripts, so most of
+    # its round trip happens while the caller is still speaking rather than
+    # after they stop.
+    @session.on("user_input_transcribed")
+    def _on_transcript(ev) -> None:
+        if not ev.is_final:
+            agent.speculate(ev.transcript)
+
+    await session.start(agent=agent, room=ctx.room)
 
 
 if __name__ == "__main__":

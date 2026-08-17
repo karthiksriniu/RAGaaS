@@ -109,3 +109,33 @@ if ctx_problems:
         print("  -", c)
     sys.exit(1)
 print("  retrieved context is pruned each turn")
+
+
+# --- preemptive generation vs RAG -------------------------------------------
+# preemptive_generation keeps its speculative reply ONLY if the chat context is
+# unchanged when the turn completes. on_user_turn_completed injects retrieved
+# passages every turn, so the draft is always cancelled - an extra LLM call per
+# turn, and CPU contention on a single-vCPU container, for no benefit. If
+# someone re-enables it without removing the context injection, say so.
+def _check_preemptive() -> list[str]:
+    problems = []
+    enabled = re.search(r"preemptive_generation\s*=\s*True", agent_src)
+    injects = "turn_ctx.add_message" in agent_src
+    if enabled and injects:
+        problems.append(
+            "preemptive_generation=True while on_user_turn_completed still injects "
+            "context - the speculative reply is cancelled every turn and wasted"
+        )
+    if "def speculate" not in agent_src:
+        problems.append("speculative retrieval (speculate) is missing - the KB lookup "
+                        "no longer overlaps the caller speaking")
+    return problems
+
+
+pre_problems = _check_preemptive()
+if pre_problems:
+    print("\nFAILED:")
+    for c in pre_problems:
+        print("  -", c)
+    sys.exit(1)
+print("  preemptive generation / speculative retrieval consistent")
