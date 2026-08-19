@@ -1,15 +1,15 @@
 import type { NextConfig } from "next";
 
 const nextConfig: NextConfig = {
-  // pdf-parse wraps pdfjs, which loads a worker and font/cmap assets at runtime
-  // by resolving paths relative to its own package. Bundled by Next those paths
-  // no longer exist, and every PDF upload failed on Vercel while working
-  // locally - the bundler is the only difference between the two. Loading it
-  // with a native require from node_modules keeps those assets reachable.
+  // exceljs reaches for optional native/stream helpers that survive bundling
+  // unreliably, so it is loaded from node_modules rather than bundled.
   //
-  // exceljs is here for the same class of reason: it reaches for optional
-  // native/stream helpers that survive bundling unreliably.
-  serverExternalPackages: ["pdf-parse", "exceljs"],
+  // pdf-parse used to be listed here too: it wraps pdfjs, which resolves a
+  // worker and font assets relative to its own package, and those paths stop
+  // existing once bundled - PDF uploads failed on Vercel while working locally.
+  // Replaced by unpdf, which ships a serverless pdfjs build with the assets
+  // inlined, so no escape hatch is needed.
+  serverExternalPackages: ["exceljs"],
 };
 
 export default nextConfig;

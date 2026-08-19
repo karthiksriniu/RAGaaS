@@ -44,29 +44,56 @@ export function extensionOf(filename: string): string {
   return i === -1 ? "" : filename.slice(i).toLowerCase();
 }
 
-/** PDFs carry no heading structure, only positioned text, so blank-line-separated
- * blocks become paragraphs. Single newlines are joined: PDF extraction breaks
- * lines at the page's visual width, and treating those as paragraph breaks
- * would shred every sentence into fragments too small to retrieve on. */
-function pdfTextToHtml(text: string): string {
+/** Roughly how much text belongs in one paragraph block before it stops being
+ * retrievable. Embedding a whole document as one vector matches everything
+ * weakly and nothing well; these become separate chunks instead. */
+const PDF_MAX_BLOCK_CHARS = 700;
+
+/** PDFs carry no heading structure, only positioned text.
+ *
+ * Blank-line-separated blocks become paragraphs where the PDF has them, and
+ * single newlines are joined: extraction breaks lines at the page's visual
+ * width, so treating those as paragraph breaks would shred every sentence into
+ * fragments too small to retrieve on.
+ *
+ * Many PDFs have no blank lines at all once extracted, which would leave the
+ * entire document as ONE paragraph and therefore one chunk - measured on a real
+ * file, so not hypothetical. Anything still oversized after that is split on
+ * sentence boundaries, which keeps each chunk about one idea. */
+function splitLongBlock(block: string): string[] {
+  if (block.length <= PDF_MAX_BLOCK_CHARS) return [block];
+
+  const sentences = block.match(/[^.!?]+[.!?]+(\s|$)|[^.!?]+$/g) || [block];
+  const out: string[] = [];
+  let buf = "";
+  for (const sentence of sentences) {
+    // Start a new block once adding this sentence would overshoot, unless the
+    // buffer is empty - a single sentence longer than the cap still has to go
+    // somewhere, and breaking mid-sentence reads worse than an oversized block.
+    if (buf && buf.length + sentence.length > PDF_MAX_BLOCK_CHARS) {
+      out.push(buf.trim());
+      buf = "";
+    }
+    buf += sentence;
+  }
+  if (buf.trim()) out.push(buf.trim());
+  return out;
+}
+
+export function pdfTextToHtml(text: string): string {
   return text
     .split(/\n\s*\n+/)
     .map((block) => block.replace(/\s*\n\s*/g, " ").trim())
     .filter((block) => block.length > 0)
+    .flatMap(splitLongBlock)
     .map((block) => `<p>${escapeHtml(block)}</p>`)
     .join("\n");
 }
 
 async function extractPdf(buffer: Buffer): Promise<string> {
-  const { PDFParse } = await import("pdf-parse");
-  const parser = new PDFParse({ data: new Uint8Array(buffer) });
-  try {
-    const result = await parser.getText();
-    return pdfTextToHtml(result.text || "");
-  } finally {
-    // Holds a worker open otherwise, which leaks across serverless invocations.
-    await parser.destroy().catch(() => {});
-  }
+  const { extractText } = await import("unpdf");
+  const { text } = await extractText(new Uint8Array(buffer), { mergePages: true });
+  return pdfTextToHtml(text || "");
 }
 
 /** Each sheet becomes a heading plus one <tr> per row, which is exactly what the
