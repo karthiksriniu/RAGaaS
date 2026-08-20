@@ -49,24 +49,45 @@ export function extensionOf(filename: string): string {
  * weakly and nothing well; these become separate chunks instead. */
 const PDF_MAX_BLOCK_CHARS = 700;
 
-/** PDFs carry no heading structure, only positioned text.
+/** Longest a line can be and still plausibly be a heading rather than prose. */
+const PDF_HEADING_MAX_CHARS = 70;
+
+/** Splits on sentence ends WITHOUT losing characters.
  *
- * Blank-line-separated blocks become paragraphs where the PDF has them, and
- * single newlines are joined: extraction breaks lines at the page's visual
- * width, so treating those as paragraph breaks would shred every sentence into
- * fragments too small to retrieve on.
+ * The previous implementation used String.match with
+ * /[^.!?]+[.!?]+(\s|$)|[^.!?]+$/g, which silently discarded any text it could
+ * not match from the current position. A real customer document containing
+ * "R.A.G" - a full stop followed by a letter rather than a space - made the
+ * match starting at position 0 fail, so the engine skipped forward and threw
+ * away the first 274 characters, including the document's opening heading and
+ * two entire sections. Nothing errored; the content simply was not there.
  *
- * Many PDFs have no blank lines at all once extracted, which would leave the
- * entire document as ONE paragraph and therefore one chunk - measured on a real
- * file, so not hypothetical. Anything still oversized after that is split on
- * sentence boundaries, which keeps each chunk about one idea. */
+ * This scans by index instead and every branch appends a slice, so the pieces
+ * always rejoin to exactly the input. There is a test asserting that. */
+function splitIntoSentences(text: string): string[] {
+  const out: string[] = [];
+  let start = 0;
+  for (let i = 0; i < text.length; i++) {
+    const ch = text[i];
+    if (ch !== "." && ch !== "!" && ch !== "?") continue;
+    const next = text[i + 1];
+    // A boundary only when whitespace or end follows, so "R.A.G", "3.5" and
+    // "Ltd." mid-sentence stay intact.
+    if (next === undefined || /\s/.test(next)) {
+      out.push(text.slice(start, i + 1));
+      start = i + 1;
+    }
+  }
+  if (start < text.length) out.push(text.slice(start));
+  return out;
+}
+
 function splitLongBlock(block: string): string[] {
   if (block.length <= PDF_MAX_BLOCK_CHARS) return [block];
 
-  const sentences = block.match(/[^.!?]+[.!?]+(\s|$)|[^.!?]+$/g) || [block];
   const out: string[] = [];
   let buf = "";
-  for (const sentence of sentences) {
+  for (const sentence of splitIntoSentences(block)) {
     // Start a new block once adding this sentence would overshoot, unless the
     // buffer is empty - a single sentence longer than the cap still has to go
     // somewhere, and breaking mid-sentence reads worse than an oversized block.
@@ -80,14 +101,70 @@ function splitLongBlock(block: string): string[] {
   return out;
 }
 
+/** Whether a line is a heading rather than a wrapped line of prose.
+ *
+ * PDFs carry no heading markup, so structure has to be inferred - and without
+ * it a document collapses into one untitled blob, which retrieves far worse
+ * than the same content as a .docx where mammoth supplies real <h1>/<h2>.
+ *
+ * Three signals together, checked against a real customer document:
+ *  - Short. Prose wraps at the page width (~90 chars there), so a full-width
+ *    line is never a heading.
+ *  - Starts with a capital. A wrapped continuation begins mid-sentence and so
+ *    usually starts lowercase ("optimise pay outs", "teams to aid decision
+ *    making"), which is what separates it from a genuine heading.
+ *  - The next line also starts with a capital letter. After a heading a new
+ *    sentence begins; after a short *final* line of a paragraph, the next line
+ *    tends to continue lowercase or start with a digit.
+ */
+function isHeadingLine(line: string, following: string[]): boolean {
+  const t = line.trim();
+  if (!t || t.length > PDF_HEADING_MAX_CHARS) return false;
+  // Ending punctuation means it is a sentence, not a title.
+  if (/[.,;:!?]$/.test(t)) return false;
+  if (!/^[A-Z]/.test(t)) return false;
+
+  const next = following.map((l) => l.trim()).find((l) => l.length > 0);
+  // Trailing line with nothing after it is far more likely a stray fragment
+  // than a heading for content that does not exist.
+  if (!next) return false;
+  return /^[A-Z]/.test(next);
+}
+
 export function pdfTextToHtml(text: string): string {
-  return text
-    .split(/\n\s*\n+/)
-    .map((block) => block.replace(/\s*\n\s*/g, " ").trim())
-    .filter((block) => block.length > 0)
-    .flatMap(splitLongBlock)
-    .map((block) => `<p>${escapeHtml(block)}</p>`)
-    .join("\n");
+  const lines = text.split("\n");
+  const parts: string[] = [];
+  let paragraph: string[] = [];
+
+  const flush = () => {
+    if (paragraph.length === 0) return;
+    // Join the visual line wraps back into prose: extraction breaks lines at
+    // the page width, and treating those as paragraph breaks would shred every
+    // sentence into fragments too small to retrieve on.
+    const block = paragraph.join(" ").replace(/\s+/g, " ").trim();
+    paragraph = [];
+    if (!block) return;
+    for (const piece of splitLongBlock(block)) {
+      if (piece.trim()) parts.push(`<p>${escapeHtml(piece.trim())}</p>`);
+    }
+  };
+
+  for (let i = 0; i < lines.length; i++) {
+    const trimmed = lines[i].trim();
+    if (!trimmed) {
+      flush();
+      continue;
+    }
+    if (isHeadingLine(trimmed, lines.slice(i + 1))) {
+      flush();
+      parts.push(`<h2>${escapeHtml(trimmed)}</h2>`);
+      continue;
+    }
+    paragraph.push(trimmed);
+  }
+  flush();
+
+  return parts.join("\n");
 }
 
 async function extractPdf(buffer: Buffer): Promise<string> {

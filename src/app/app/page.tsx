@@ -121,6 +121,14 @@ export default function BusinessDashboard() {
     }
   }
 
+  async function rebuildStarterKb() {
+    setUploadError(null);
+    const res = await fetch("/api/business/kb/rebuild", { method: "POST" });
+    const d = await res.json().catch(() => ({}));
+    if (!res.ok) return setUploadError(d.error || "Could not start the rebuild");
+    loadMe();
+  }
+
   async function removeSource(sourceUri: string) {
     await fetch("/api/business/kb", {
       method: "DELETE",
@@ -253,6 +261,14 @@ export default function BusinessDashboard() {
                     Reading {me?.website || "your website"} to build a fuller starting point. Your
                     agent already works — this will replace the starter document when it&apos;s done.
                   </span>
+                </div>
+              )}
+
+              {me?.website && me?.kbEnhancementStatus !== "pending" && (
+                <div className="mb-4">
+                  <Button variant="text" size="small" icon="refresh" onClick={rebuildStarterKb}>
+                    Re-read {me.website}
+                  </Button>
                 </div>
               )}
 

@@ -1,45 +1,13 @@
 import { chunkHtmlByHeadings } from "@/lib/chunk";
 import { embedTexts } from "@/lib/embeddings";
 import { withTenant } from "@/lib/db";
+import { markdownToSimpleHtml } from "@/lib/markdownHtml";
 
 // Ingests plain markdown/text into a tenant's knowledge base, reusing the same
 // chunk -> embed -> store path as the .docx upload so generated and uploaded
 // sources are indistinguishable downstream. Extracted rather than duplicated
 // inside the signup flow: the two must stay in step, or answers would differ
 // depending on how the content arrived.
-
-/** Markdown headings become <h_> so chunkHtmlByHeadings splits on them, which
- * is what gives each chunk its heading. Everything else becomes a paragraph.
- * Deliberately minimal - this handles the headings/paragraph structure of
- * generated content, not arbitrary markdown. */
-function markdownToSimpleHtml(md: string): string {
-  const escape = (t: string) =>
-    t.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;");
-
-  return md
-    .split(/\n{2,}/)
-    .map((block) => block.trim())
-    .filter(Boolean)
-    .map((block) => {
-      const heading = block.match(/^(#{1,3})\s+(.*)$/);
-      if (heading) {
-        const level = heading[1].length;
-        return `<h${level}>${escape(heading[2].trim())}</h${level}>`;
-      }
-      // Bullet lists become <li>, which the chunker now captures.
-      if (/^[-*]\s+/m.test(block)) {
-        const items = block
-          .split("\n")
-          .map((l) => l.replace(/^[-*]\s+/, "").trim())
-          .filter(Boolean)
-          .map((l) => `<li>${escape(l)}</li>`)
-          .join("");
-        return `<ul>${items}</ul>`;
-      }
-      return `<p>${escape(block.replace(/\n/g, " "))}</p>`;
-    })
-    .join("");
-}
 
 export interface IngestResult {
   sourceUri: string;
