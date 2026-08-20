@@ -135,6 +135,7 @@ export function pdfTextToHtml(text: string): string {
   const lines = text.split("\n");
   const parts: string[] = [];
   let paragraph: string[] = [];
+  let category = "";
 
   const flush = () => {
     if (paragraph.length === 0) return;
@@ -157,7 +158,18 @@ export function pdfTextToHtml(text: string): string {
     }
     if (isHeadingLine(trimmed, lines.slice(i + 1))) {
       flush();
-      parts.push(`<h2>${escapeHtml(trimmed)}</h2>`);
+      const nextNonEmpty = lines.slice(i + 1).map((l) => l.trim()).find((l) => l.length > 0);
+      // A heading whose next line is ALSO a heading is a category label with no
+      // body of its own ("FMCG", then "Promoter Target Setting"). On its own it
+      // produces an empty section the chunker discards, taking the category
+      // with it - so "what do you do for BFSI" matched nothing at all. Carried
+      // into each child heading instead, it stays searchable.
+      if (nextNonEmpty && isHeadingLine(nextNonEmpty, lines.slice(i + 2))) {
+        category = trimmed;
+        continue;
+      }
+      const title = category ? `${category} — ${trimmed}` : trimmed;
+      parts.push(`<h2>${escapeHtml(title)}</h2>`);
       continue;
     }
     paragraph.push(trimmed);

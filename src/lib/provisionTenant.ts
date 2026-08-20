@@ -181,10 +181,22 @@ export async function generateStarterKb(
     messages: [{ role: "user", content: ask }],
   });
 
-  // With server tools the reply is interleaved text and tool-result blocks;
-  // take every text block, not just the first, or the document is truncated
-  // at the first fetch.
-  return msg.content
+  // With server tools the reply interleaves text and tool-result blocks, and
+  // the text BETWEEN fetches is the model talking to itself - "I have enough
+  // content now... Let me write the knowledge base now." Taking every text
+  // block swept that narration into the knowledge base, where it became a
+  // retrievable chunk that outscored real content on pricing questions.
+  //
+  // The document is what comes after the LAST tool use, so only those blocks
+  // are kept. Falls back to all text when no tool ran (the no-website path),
+  // where there is no narration to strip.
+  const lastToolUse = msg.content.reduce(
+    (last, block, i) => (block.type === "text" ? last : i),
+    -1
+  );
+  const documentBlocks = lastToolUse === -1 ? msg.content : msg.content.slice(lastToolUse + 1);
+
+  return documentBlocks
     .filter((b): b is Anthropic.TextBlock => b.type === "text")
     .map((b) => b.text)
     .join("\n\n")

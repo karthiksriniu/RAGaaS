@@ -76,9 +76,10 @@ describe("pdfTextToHtml", () => {
 
     it("promotes short capitalised lines followed by a new sentence", () => {
       const html = pdfTextToHtml(doc);
-      expect(html).toContain("<h2>FMCG</h2>");
-      expect(html).toContain("<h2>Promoter Target Setting</h2>");
-      expect(html).toContain("<h2>Trade promotion evaluation</h2>");
+      // "FMCG" heads the group rather than standing alone - see the category
+      // tests below for why - so it appears as a prefix on its children.
+      expect(html).toContain("<h2>FMCG — Promoter Target Setting</h2>");
+      expect(html).toContain("<h2>FMCG — Trade promotion evaluation</h2>");
     });
 
     it("does NOT promote a short lowercase continuation line", () => {
@@ -107,5 +108,48 @@ describe("pdfTextToHtml", () => {
   it("drops empty input", () => {
     expect(pdfTextToHtml("")).toBe("");
     expect(pdfTextToHtml("   \n\n  ")).toBe("");
+  });
+});
+
+describe("category headings", () => {
+  // "FMCG" and "BFSI" head groups of use cases and have no body of their own.
+  // Emitted alone they became empty sections the chunker discarded, so "what
+  // do you do for BFSI" retrieved nothing at all despite the content being
+  // present under that category.
+  const doc = [
+    "FMCG",
+    "Promoter Target Setting",
+    "A Machine Learning model to arrive at optimum targets at a agent level to maximise sales",
+    "Trade promotion evaluation",
+    "Identifies ROI at product and geo level using a gradient boosted model for the trade team",
+    "BFSI",
+    "Delinquency analysis",
+    "To work on a single source of truth to test hypotheses and answer questions from business",
+  ].join("\n");
+
+  it("carries the category into each child heading", () => {
+    const html = pdfTextToHtml(doc);
+    expect(html).toContain("<h2>FMCG — Promoter Target Setting</h2>");
+    expect(html).toContain("<h2>FMCG — Trade promotion evaluation</h2>");
+    expect(html).toContain("<h2>BFSI — Delinquency analysis</h2>");
+  });
+
+  it("does not leave the category as a section of its own", () => {
+    const html = pdfTextToHtml(doc);
+    expect(html).not.toContain("<h2>FMCG</h2>");
+    expect(html).not.toContain("<h2>BFSI</h2>");
+  });
+
+  it("switches category when a new one appears", () => {
+    const html = pdfTextToHtml(doc);
+    // Delinquency belongs to BFSI, not the earlier FMCG.
+    expect(html).not.toContain("FMCG — Delinquency analysis");
+  });
+
+  it("still keeps every word", () => {
+    const words = (h: string) => h.replace(/<[^>]+>/g, " ").split(/\s+/).filter(Boolean);
+    // Category names are repeated per child, so compare as a set.
+    const produced = new Set(words(pdfTextToHtml(doc)));
+    for (const w of doc.split(/\s+/).filter(Boolean)) expect(produced.has(w)).toBe(true);
   });
 });
