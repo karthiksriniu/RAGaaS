@@ -1,6 +1,7 @@
 import { embedTexts } from "@/lib/embeddings";
 import { withTenant } from "@/lib/db";
 import type { RetrievedChunk } from "@/lib/contextBlock";
+import { rankBySourcePriority } from "@/lib/sourcePriority";
 
 // The retrieval half of the RAG pipeline, split out of answerQuestion.ts so
 // it can be reused by paths that need a tenant's matching KB content without
@@ -22,6 +23,11 @@ export { buildContextBlock } from "@/lib/contextBlock";
  * cost. */
 export const DEFAULT_RETRIEVAL_LIMIT = 6;
 
+/** How many candidates to pull before re-ranking by source priority. Wide
+ * enough that an uploaded chunk sitting just outside the top `limit` on raw
+ * similarity can still be promoted, narrow enough to stay cheap. */
+const CANDIDATE_MULTIPLIER = 3;
+
 /** Embeds the question and returns the tenant's closest-matching chunks,
  * ordered most-similar first. Scoped by withTenant(), so RLS is the backstop
  * under the explicit tenant_id filter - the same two-layer guarantee the rest
@@ -36,6 +42,11 @@ export async function retrieveChunks(
   const [queryEmbedding] = await embedTexts([question], "query");
   const embeddingLiteral = `[${queryEmbedding.join(",")}]`;
 
+  // Over-fetch, then re-rank. The ORDER BY stays a pure vector distance so the
+  // pgvector index is still used; doing the source-priority arithmetic in SQL
+  // would turn this into a sequential scan over every chunk the tenant owns.
+  const candidateLimit = limit * CANDIDATE_MULTIPLIER;
+
   const result = await withTenant(tenantId, (client) =>
     client.query<RetrievedChunk>(
       `SELECT text, source_type, source_uri, page_or_row, 1 - (embedding <=> $1) as similarity
@@ -43,9 +54,9 @@ export async function retrieveChunks(
        WHERE tenant_id = $2
        ORDER BY embedding <=> $1
        LIMIT $3`,
-      [embeddingLiteral, tenantId, limit]
+      [embeddingLiteral, tenantId, candidateLimit]
     )
   );
 
-  return result.rows;
+  return rankBySourcePriority(result.rows, limit);
 }
