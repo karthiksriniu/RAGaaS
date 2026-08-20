@@ -17,11 +17,44 @@ describe("chunkHtmlByHeadings", () => {
     expect(chunks[1].text).toContain("water-soaked");
   });
 
-  it("puts content before the first heading under 'Introduction'", () => {
+  it("folds a short preamble into the first real section", () => {
+    // Content before the first heading is usually a title page. Embedded on
+    // its own it becomes a tiny chunk that matches almost any question - a real
+    // tenant's "Industry Use Cases Knowledge Base" title outranked the section
+    // that actually answered the caller. Merged, not dropped: the words stay
+    // searchable under the first real heading.
     const html = `<p>General overview text.</p><h1>Section One</h1><p>Detail.</p>`;
     const chunks = chunkHtmlByHeadings(html);
-    expect(chunks[0].heading).toBe("Introduction");
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0].heading).toBe("Section One");
     expect(chunks[0].text).toContain("General overview text");
+    expect(chunks[0].text).toContain("Detail");
+  });
+
+  it("keeps a LONG preamble as its own 'Introduction' section", () => {
+    // A document with real content before its first heading is not a title
+    // page, and that content deserves its own chunk.
+    const preamble = "This document explains the full process in detail. ".repeat(4);
+    const html = `<p>${preamble}</p><h1>Section One</h1><p>Detail.</p>`;
+    const chunks = chunkHtmlByHeadings(html);
+    expect(chunks).toHaveLength(2);
+    expect(chunks[0].heading).toBe("Introduction");
+  });
+
+  it("never merges a short section that has a real heading", () => {
+    // Length is not the signal - an authored heading means authored structure.
+    // "Symptoms include dark spots on leaves." is 37 characters and a perfectly
+    // good answer.
+    const html = `<h1>Early Blight</h1><p>Dark spots.</p><h1>Late Blight</h1><p>Wet lesions.</p>`;
+    const chunks = chunkHtmlByHeadings(html);
+    expect(chunks).toHaveLength(2);
+    expect(chunks.map((c) => c.heading)).toEqual(["Early Blight", "Late Blight"]);
+  });
+
+  it("keeps a lone preamble when there is no section to merge into", () => {
+    const chunks = chunkHtmlByHeadings(`<p>Just a note.</p>`);
+    expect(chunks).toHaveLength(1);
+    expect(chunks[0].text).toContain("Just a note");
   });
 
   it("strips HTML tags and decodes common entities", () => {
