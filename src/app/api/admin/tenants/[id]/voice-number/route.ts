@@ -11,6 +11,7 @@ import {
   VobizError,
   VobizNotConfiguredError,
 } from "@/lib/vobiz";
+import { addNumberToPool, assignNumberToTenant, releaseNumber } from "@/lib/numberPool";
 
 export const runtime = "nodejs";
 
@@ -86,7 +87,14 @@ export async function POST(req: NextRequest, ctx: { params: Promise<{ id: string
       await provisionNumber(e164);
     }
 
-    const updated = await updateTenantVoiceNumber(id, e164);
+    // Record it in the pool as well as on the tenant. This route predates the
+    // pool and used to write only tenants.voice_phone_number, so a number
+    // bought here was invisible to signup - which could then hand the SAME
+    // number to a second business while calls still routed to the first.
+    await addNumberToPool(e164);
+    await assignNumberToTenant(e164, id);
+
+    const updated = await assertTenantExists(id);
     return NextResponse.json({
       tenant: updated,
       provisioned: !body.alreadyOwned,
@@ -124,6 +132,12 @@ export async function DELETE(req: NextRequest, ctx: { params: Promise<{ id: stri
   }
   const { id } = await ctx.params;
   try {
+    const tenant = await assertTenantExists(id);
+    // Release in the pool too, or the number stays marked as held and signup
+    // will never hand it out again.
+    if (tenant.voicePhoneNumber) {
+      await releaseNumber(tenant.voicePhoneNumber).catch(() => {});
+    }
     return NextResponse.json({ tenant: await updateTenantVoiceNumber(id, null) });
   } catch (err) {
     if (err instanceof TenantNotFoundError) {
