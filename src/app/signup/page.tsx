@@ -8,6 +8,7 @@ import { TextField } from "@/components/kiowa/TextField";
 import { Textarea } from "@/components/kiowa/Textarea";
 import { ProgressIndicator } from "@/components/kiowa/ProgressIndicator";
 import { Logo } from "@/components/Logo";
+import { VoiceDictation } from "@/components/VoiceDictation";
 
 type Step = "details" | "otp" | "plan" | "paying" | "paid" | "provisioning" | "done";
 
@@ -108,6 +109,15 @@ export default function SignupPage() {
                 value={description}
                 onChange={(e) => setDescription(e.target.value)}
                 rows={4}
+                placeholder="Type it, or tap the button below and just say it."
+              />
+              <VoiceDictation
+                disabled={busy}
+                // Appended, never replaced: someone can record twice, or record
+                // and then fix a mangled name by hand.
+                onTranscript={(t) =>
+                  setDescription((d) => (d.trim() ? `${d.trim()} ${t}` : t))
+                }
               />
             </div>
             <div className="mt-4">
