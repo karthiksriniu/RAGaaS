@@ -3,6 +3,7 @@ import { pool } from "@/lib/db";
 import { createTenant } from "@/lib/tenants";
 import { ingestText } from "@/lib/ingestText";
 import { normalizeWebsite } from "@/lib/websiteUrl";
+import { DEFAULT_ANSWER_STYLE_MD } from "@/lib/answerStyle";
 
 // Everything that happens after a business "pays": create its tenant, give it a
 // number, and make its agent useful on day one.
@@ -237,26 +238,17 @@ export async function provisionTenant(
     licenseExpiresAt: null,
   });
 
-  // The description shapes how the agent introduces itself and what it treats
-  // as in-scope. Stored as the tenant's answer-style config, which the voice
-  // prompt already appends after its safety rules.
+  // The description is stored, but ONLY as raw material for generating the
+  // knowledge base below - it is deliberately NOT copied into the answer-style
+  // config. See answerStyle.ts: a business summary sitting in the prompt
+  // competes with retrieved knowledge and wins often enough to matter.
+  //
+  // Every tenant gets the same starting answer style, which they can then edit.
   const trimmed = description.trim();
-  if (trimmed) {
-    await pool.query(
-      "UPDATE tenants SET business_description = $2, answer_config_md = $3, website_url = $4 WHERE id = $1",
-      [
-        tenantId,
-        trimmed,
-        `# About this business\n${trimmed}\n\n## Answer style\n- Keep answers short and practical; callers cannot skim.\n- Stay within what this business actually does. If asked about something unrelated, say so and offer to connect them to a person.`,
-        website,
-      ]
-    );
-  } else {
-    await pool.query(
-      "UPDATE tenants SET business_description = $2, website_url = $3 WHERE id = $1",
-      [tenantId, null, website]
-    );
-  }
+  await pool.query(
+    "UPDATE tenants SET business_description = $2, answer_config_md = $3, website_url = $4 WHERE id = $1",
+    [tenantId, trimmed || null, DEFAULT_ANSWER_STYLE_MD, website]
+  );
 
   const phoneNumber = await claimPooledNumber(tenantId);
 

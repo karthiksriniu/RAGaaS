@@ -49,8 +49,40 @@ describe("voice presets", () => {
   });
 
   it("resolves a known id to its own settings", () => {
-    const p = resolveVoicePreset("male-measured");
-    expect(p.id).toBe("male-measured");
-    expect(p.speaker).toBe("shubh");
+    const p = resolveVoicePreset("male-energetic");
+    expect(p.id).toBe("male-energetic");
+    expect(p.speaker).toBe("rohan");
+  });
+
+  it("offers exactly the four supported options", () => {
+    expect(VOICE_PRESETS.map((p) => p.id).sort()).toEqual([
+      "female-energetic",
+      "female-enthusiastic",
+      "male-energetic",
+      "male-enthusiastic",
+    ]);
+  });
+
+  it("energetic is a genuine notch above enthusiastic, not a relabel", () => {
+    for (const gender of ["female", "male"]) {
+      const enth = resolveVoicePreset(`${gender}-enthusiastic`);
+      const ener = resolveVoicePreset(`${gender}-energetic`);
+      expect(ener.pace, gender).toBeGreaterThan(enth.pace);
+      expect(ener.temperature, gender).toBeGreaterThan(enth.temperature);
+      // Same speaker either side, so the difference a business hears when it
+      // switches is energy alone rather than a different person.
+      expect(ener.speaker, gender).toBe(enth.speaker);
+    }
+  });
+
+  // A tenant that chose a male voice before the list shrank must not silently
+  // start answering its phone in a female one.
+  it("keeps retired preset ids on a voice of the same gender", () => {
+    for (const retired of ["male-warm", "male-measured", "male-chirpy"]) {
+      expect(resolveVoicePreset(retired).id, retired).toMatch(/^male-/);
+    }
+    for (const retired of ["female-warm", "female-measured"]) {
+      expect(resolveVoicePreset(retired).id, retired).toMatch(/^female-/);
+    }
   });
 });

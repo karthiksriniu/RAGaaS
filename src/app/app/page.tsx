@@ -385,7 +385,9 @@ export default function BusinessDashboard() {
               <Card variant="outlined" padding={24}>
                 <p className="kw-title-medium mb-1">Answer style</p>
                 <p className="kw-body-small mb-4" style={{ color: "var(--color-on-surface-variant)" }}>
-                  Tone, length, what to avoid. Plain text or Markdown.
+                  How your agent speaks — tone, length, what to avoid. Facts about your
+                  business belong in Knowledge Sources, not here; anything written here
+                  competes with them when your agent answers.
                 </p>
                 <Textarea
                   label="Answer style"

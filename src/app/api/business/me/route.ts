@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { pool } from "@/lib/db";
 import { businessTenantId } from "@/lib/businessAuth";
 import { assertTenantExists, TenantNotFoundError, updateTenantAnswerConfig } from "@/lib/tenants";
-import { VOICE_PRESETS, DEFAULT_VOICE_PRESET_ID } from "@/lib/voicePresets";
+import { VOICE_PRESETS, resolveVoicePreset } from "@/lib/voicePresets";
 
 export const runtime = "nodejs";
 
@@ -39,7 +39,10 @@ export async function GET(req: NextRequest) {
       kbEnhancementError: desc.rows[0]?.kb_enhancement_error ?? null,
       voicePhoneNumber: tenant.voicePhoneNumber,
       answerConfigMd: tenant.answerConfigMd,
-      voicePreset: tenant.voicePreset ?? DEFAULT_VOICE_PRESET_ID,
+      // Resolved rather than raw: a tenant still holding a retired preset id
+      // would otherwise match none of the options below and the dashboard would
+      // show no voice selected at all, while a real voice answers its calls.
+      voicePreset: resolveVoicePreset(tenant.voicePreset).id,
       voicePresets: VOICE_PRESETS.map((p) => ({ id: p.id, label: p.label, description: p.description })),
     });
   } catch (err) {
