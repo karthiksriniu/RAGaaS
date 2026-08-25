@@ -1,6 +1,12 @@
 import { randomBytes, createHmac, timingSafeEqual, createHash } from "crypto";
 import type { NextRequest } from "next/server";
 import { pool } from "@/lib/db";
+import {
+  generateCode,
+  configuredChannel,
+  startWhatsAppVerification,
+  checkWhatsAppVerification,
+} from "@/lib/otpDelivery";
 
 // Auth for business owners. Identity is a mobile number verified by OTP - there
 // is no password anywhere in this flow, so nothing to store, leak or reset.
@@ -15,8 +21,6 @@ const SESSION_TTL_MS = 1000 * 60 * 60 * 24 * 30; // 30 days
 const OTP_TTL_MS = 1000 * 60 * 10; // 10 minutes
 const MAX_OTP_ATTEMPTS = 5;
 
-/** The stub code. Fixed and never delivered - see sendOtp(). */
-const STAGING_OTP_CODE = process.env.OTP_TEST_CODE || "000000";
 
 /** Whether it is safe to hand the code back to the browser.
  *
@@ -59,17 +63,46 @@ function hashCode(mobile: string, code: string): string {
 }
 
 export interface SentOtp {
-  /** Only populated outside production, so staging can show/log the code
-   * instead of sending it. Never returned to the browser in production. */
+  /** Only populated when the environment cannot deliver, so staging can show
+   * the code on screen. Never returned to the browser in production. */
   devCode?: string;
 }
 
-/** Issues an OTP challenge. Deliberately does NOT deliver anything yet: the
- * number's Vobiz capabilities are voice-only (sms:false), so a real sender is
- * a separate piece of work. The flow, storage, expiry and attempt-capping are
- * all real, so swapping in delivery later touches only this function. */
+export class OtpUndeliverableError extends Error {
+  constructor() {
+    super("Verification codes cannot be sent from this environment yet.");
+    this.name = "OtpUndeliverableError";
+  }
+}
+
+/** Issues an OTP challenge and gets the code to the owner.
+ *
+ * Two channels, chosen by what the environment can actually do:
+ *
+ *  - WhatsApp, via Twilio Verify. Twilio generates, sends and later checks the
+ *    code, so nothing of ours is stored for it - the local row below exists
+ *    only to carry expiry, the attempt cap, and the "was this number verified"
+ *    receipt that signup depends on. Its code_hash is deliberately random so a
+ *    local comparison can never accidentally succeed for this channel.
+ *  - None, for staging, where the code comes back to the browser and is shown
+ *    on screen instead of being sent.
+ *
+ * The combination "cannot deliver" AND "must not reveal" THROWS. That pairing
+ * only happens on a production deployment with no sender configured, and the
+ * alternative is issuing a code the owner has no way of receiving and no way
+ * of knowing was never sent. Failing loudly at signup is a far better outcome
+ * than a silent dead end. */
 export async function sendOtp(mobile: string): Promise<SentOtp> {
-  const code = STAGING_OTP_CODE;
+  const channel = configuredChannel();
+  const reveal = mayRevealCode();
+  if (channel === "none" && !reveal) throw new OtpUndeliverableError();
+
+  // Delivery FIRST for WhatsApp. If Twilio rejects the number or the sender is
+  // misconfigured, no challenge row is written - so a retry is clean, and the
+  // owner is never left holding a live challenge for an unsent code.
+  if (channel === "whatsapp") await startWhatsAppVerification(mobile);
+
+  const code = channel === "whatsapp" ? null : generateCode();
   const expiresAt = new Date(Date.now() + OTP_TTL_MS);
 
   await pool.query(
@@ -78,13 +111,14 @@ export async function sendOtp(mobile: string): Promise<SentOtp> {
      ON CONFLICT (mobile) DO UPDATE
        SET code_hash = excluded.code_hash, attempts = 0,
            expires_at = excluded.expires_at, created_at = now()`,
-    [mobile, hashCode(mobile, code), expiresAt]
+    [mobile, code ? hashCode(mobile, code) : randomBytes(32).toString("hex"), expiresAt]
   );
   // Opportunistic sweep - keeps the table from accumulating abandoned challenges.
   await pool.query("DELETE FROM otp_challenges WHERE expires_at < now() - interval '1 day'");
 
-  console.log(`[otp] issued for ${mobile}: ${code}`);
-  return mayRevealCode() ? { devCode: code } : {};
+  // Never log the code itself once it is a real secret being really delivered.
+  console.log(`[otp] issued for ${mobile} via ${channel}`);
+  return reveal && code ? { devCode: code } : {};
 }
 
 export type OtpResult = "ok" | "invalid" | "expired" | "too_many_attempts" | "not_found";
@@ -100,9 +134,18 @@ export async function verifyOtp(mobile: string, code: string): Promise<OtpResult
   if (row.expired) return "expired";
   if (row.attempts >= MAX_OTP_ATTEMPTS) return "too_many_attempts";
 
-  const a = Buffer.from(row.code_hash, "hex");
-  const b = Buffer.from(hashCode(mobile, code), "hex");
-  const match = a.length === b.length && timingSafeEqual(a, b);
+  // Who holds the real code depends on how it was delivered. Read from the
+  // environment rather than the row: the channel is a property of the
+  // deployment, not of one challenge, and it means no schema change was needed
+  // to introduce a second channel.
+  let match: boolean;
+  if (configuredChannel() === "whatsapp") {
+    match = await checkWhatsAppVerification(mobile, code);
+  } else {
+    const a = Buffer.from(row.code_hash, "hex");
+    const b = Buffer.from(hashCode(mobile, code), "hex");
+    match = a.length === b.length && timingSafeEqual(a, b);
+  }
 
   if (!match) {
     await pool.query("UPDATE otp_challenges SET attempts = attempts + 1 WHERE mobile = $1", [mobile]);

@@ -1,5 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
-import { normalizeMobile, sendOtp } from "@/lib/businessAuth";
+import { normalizeMobile, sendOtp, OtpUndeliverableError } from "@/lib/businessAuth";
+import { configuredChannel } from "@/lib/otpDelivery";
 import { checkRateLimit } from "@/lib/rateLimit";
 
 export const runtime = "nodejs";
@@ -19,6 +20,26 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Too many code requests. Try again later." }, { status: 429 });
   }
 
-  const { devCode } = await sendOtp(normalized);
-  return NextResponse.json({ ok: true, mobile: normalized, devCode });
+  try {
+    const { devCode } = await sendOtp(normalized);
+    // The UI says "check WhatsApp" or "check your messages" based on this,
+    // rather than guessing - being told the wrong app to look in is the
+    // difference between waiting patiently and giving up.
+    return NextResponse.json({ ok: true, mobile: normalized, devCode, channel: configuredChannel() });
+  } catch (err) {
+    if (err instanceof OtpUndeliverableError) {
+      // Configuration fault, not the caller's. 503 so it is not mistaken for a
+      // bad number, and loud in the logs so it cannot go unnoticed in prod.
+      console.error("[otp] no delivery channel configured - set TWILIO_VERIFY_SERVICE_SID");
+      return NextResponse.json(
+        { error: "We can't send verification codes just yet. Please try again shortly." },
+        { status: 503 }
+      );
+    }
+    console.error("[otp] delivery failed:", err);
+    return NextResponse.json(
+      { error: "We couldn't send your code. Check the number and try again." },
+      { status: 502 }
+    );
+  }
 }

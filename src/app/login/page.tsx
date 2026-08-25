@@ -15,6 +15,7 @@ export default function BusinessLogin() {
   const [mobile, setMobile] = useState("");
   const [code, setCode] = useState("");
   const [devCode, setDevCode] = useState<string | null>(null);
+  const [channel, setChannel] = useState<string>("none");
   const [sent, setSent] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -31,6 +32,7 @@ export default function BusinessLogin() {
     try {
       const d = await post("/api/business/otp", { mobile });
       setDevCode(d.devCode ?? null);
+      setChannel(d.channel ?? "none");
       setSent(true);
     } catch (e) { setError(e instanceof Error ? e.message : String(e)); }
     finally { setBusy(false); }
@@ -58,7 +60,9 @@ export default function BusinessLogin() {
       <Card variant="elevated" padding={32} style={{ width: "100%", maxWidth: 420 }}>
         <h1 className="kw-headline-small mb-1">Sign in</h1>
         <p className="kw-body-medium mb-6" style={{ color: "var(--color-on-surface-variant)" }}>
-          We&apos;ll send a code to your mobile.
+          {sent && channel === "whatsapp"
+            ? "We sent a code to your WhatsApp."
+            : "We\u2019ll send a code to your mobile."}
         </p>
 
         <TextField fullWidth label="Mobile number" value={mobile} onChange={(e) => setMobile(e.target.value)} type="tel" disabled={sent} />

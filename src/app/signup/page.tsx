@@ -23,6 +23,7 @@ export default function SignupPage() {
   const [mobile, setMobile] = useState("");
   const [code, setCode] = useState("");
   const [devCode, setDevCode] = useState<string | null>(null);
+  const [channel, setChannel] = useState<string>("none");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [result, setResult] = useState<{ phoneNumber: string | null; tenantId: string } | null>(null);
@@ -45,6 +46,7 @@ export default function SignupPage() {
     try {
       const d = await post("/api/business/otp", { mobile });
       setDevCode(d.devCode ?? null);
+      setChannel(d.channel ?? "none");
       setStep("otp");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -150,11 +152,13 @@ export default function SignupPage() {
           <>
             <h1 className="kw-headline-small mb-1">Verify your number</h1>
             <p className="kw-body-medium mb-6" style={{ color: "var(--color-on-surface-variant)" }}>
-              We sent a 6-digit code to {mobile}.
+              {channel === "whatsapp"
+                ? `We sent a 6-digit code to ${mobile} on WhatsApp.`
+                : `We sent a 6-digit code to ${mobile}.`}
             </p>
             {devCode && (
               <p className="kw-body-small mb-4 rounded-lg p-3" style={{ background: "var(--color-tertiary-container)", color: "var(--color-on-tertiary-container)" }}>
-                Staging: SMS isn&apos;t wired up yet — your code is <strong>{devCode}</strong>
+                Staging: codes aren&apos;t delivered here — your code is <strong>{devCode}</strong>
               </p>
             )}
             <TextField fullWidth label="6-digit code" value={code} onChange={(e) => setCode(e.target.value)} />
