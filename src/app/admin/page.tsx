@@ -133,6 +133,9 @@ export default function AdminHome() {
           <Link href="/admin/numbers">
             <Button type="button" variant="text" icon="dialpad">Phone numbers</Button>
           </Link>
+          <Link href="/admin/billing">
+            <Button type="button" variant="text" icon="payments">Billing</Button>
+          </Link>
           <Button type="button" variant="outlined" icon="logout" onClick={handleLogout}>Sign out</Button>
         </div>
       </header>

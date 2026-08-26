@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import { Button } from "@/components/kiowa/Button";
 import { Card } from "@/components/kiowa/Card";
@@ -10,10 +10,11 @@ import { ProgressIndicator } from "@/components/kiowa/ProgressIndicator";
 import { Logo } from "@/components/Logo";
 import { VoiceDictation } from "@/components/VoiceDictation";
 import { MobileField, toE164 } from "@/components/MobileField";
+import { PLAN_FEATURES, UpiPayment, type PaymentInstructions } from "@/components/UpiPayment";
 
-type Step = "details" | "otp" | "plan" | "paying" | "paid" | "provisioning" | "done";
+type Step = "details" | "otp" | "plan" | "qr" | "paying" | "paid" | "provisioning" | "done";
 
-const PLAN_PRICE = 750;
+const FALLBACK_PRICE = 999;
 
 export default function SignupPage() {
   const router = useRouter();
@@ -27,7 +28,20 @@ export default function SignupPage() {
   const [channel, setChannel] = useState<string>("none");
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
+  const [price, setPrice] = useState(FALLBACK_PRICE);
+  const [payment, setPayment] = useState<PaymentInstructions | null>(null);
   const [result, setResult] = useState<{ phoneNumber: string | null; tenantId: string } | null>(null);
+
+  // Guards the auto-advance from the payment poller: a confirmation landing
+  // while provisioning is already under way must not start a second signup.
+  const provisioning = useRef(false);
+
+  useEffect(() => {
+    fetch("/api/business/plan")
+      .then((r) => (r.ok ? r.json() : null))
+      .then((d) => d?.priceInr && setPrice(d.priceInr))
+      .catch(() => {});
+  }, []);
 
   async function post(url: string, body: unknown) {
     const res = await fetch(url, {
@@ -61,8 +75,15 @@ export default function SignupPage() {
     setBusy(true);
     try {
       const d = await post("/api/business/verify", { mobile: toE164(mobile), code });
-      // Already registered: the cookie is set, so go straight to the dashboard.
+      // Already registered: the cookie is set, so go straight to the dashboard,
+      // which is also where an expired plan is renewed.
       if (d.existing) return router.push("/app");
+
+      // Paid before, then closed the tab. Pick the signup up where it stopped
+      // rather than charging a second time.
+      if (d.payment?.status === "claimed" || d.payment?.status === "confirmed") {
+        return finishSignup(d.payment.orderId);
+      }
       setStep("plan");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
@@ -71,25 +92,59 @@ export default function SignupPage() {
     }
   }
 
+  /** Opens the payment. On staging there is nothing to pay, so the server
+   * settles the order on the spot and this shows the same overlays it always
+   * did; in production it puts a UPI QR on screen. */
   async function pay() {
     setError(null);
-    // Payment is deliberately bypassed for now; the overlays exist so the flow
-    // and its timing are real from the business's point of view.
-    setStep("paying");
-    await new Promise((r) => setTimeout(r, 3000));
-    setStep("paid");
-    await new Promise((r) => setTimeout(r, 3000));
-
-    setStep("provisioning");
+    setBusy(true);
     try {
-      const d = await post("/api/business/signup", { mobile: toE164(mobile), businessName, description, website });
-      setResult({ phoneNumber: d.phoneNumber ?? null, tenantId: d.tenantId });
-      setStep("done");
+      const d = await post("/api/business/payment/order", {
+        mobile: toE164(mobile),
+        purpose: "signup",
+      });
+
+      if (d.mode === "simulated") {
+        setStep("paying");
+        await new Promise((r) => setTimeout(r, 2000));
+        setStep("paid");
+        await new Promise((r) => setTimeout(r, 1500));
+        return finishSignup(d.orderId);
+      }
+
+      setPayment(d as PaymentInstructions);
+      setStep("qr");
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
-      setStep("plan");
+    } finally {
+      setBusy(false);
     }
   }
+
+  const finishSignup = useCallback(
+    async (orderId: string) => {
+      if (provisioning.current) return;
+      provisioning.current = true;
+      setError(null);
+      setStep("provisioning");
+      try {
+        const d = await post("/api/business/signup", {
+          mobile: toE164(mobile),
+          businessName,
+          description,
+          website,
+          orderId,
+        });
+        setResult({ phoneNumber: d.phoneNumber ?? null, tenantId: d.tenantId });
+        setStep("done");
+      } catch (e) {
+        setError(e instanceof Error ? e.message : String(e));
+        setStep(payment ? "qr" : "plan");
+        provisioning.current = false;
+      }
+    },
+    [mobile, businessName, description, website, payment]
+  );
 
   return (
     <div className="flex min-h-screen flex-col items-center px-4 py-6 sm:py-12" style={{ background: "var(--color-surface)" }}>
@@ -184,19 +239,30 @@ export default function SignupPage() {
             <Card variant="filled" padding={20} selected>
               <div className="flex items-baseline justify-between">
                 <span className="kw-title-medium">Standard</span>
-                <span className="kw-headline-small">₹{PLAN_PRICE}<span className="kw-body-medium">/month</span></span>
+                <span className="kw-headline-small">₹{price}<span className="kw-body-medium">/month</span></span>
               </div>
               <ul className="mt-3 flex flex-col gap-1">
-                {["Your own phone number", "AI agent trained on your documents", "Unlimited knowledge sources", "Handover to your team"].map((f) => (
+                {PLAN_FEATURES.map((f) => (
                   <li key={f} className="kw-body-medium" style={{ color: "var(--color-on-surface-variant)" }}>• {f}</li>
                 ))}
               </ul>
             </Card>
             {error && <p className="kw-body-small mt-3" style={{ color: "var(--color-error)" }}>{error}</p>}
             <div className="mt-6">
-              <Button variant="filled" fullWidth onClick={pay}>Pay ₹{PLAN_PRICE}</Button>
+              <Button variant="filled" fullWidth disabled={busy} onClick={pay}>
+                {busy ? "Please wait…" : `Pay ₹${price}`}
+              </Button>
             </div>
           </>
+        )}
+
+        {step === "qr" && payment && (
+          <UpiPayment
+            payment={payment}
+            onSettled={finishSignup}
+            onCancel={() => { setPayment(null); setStep("plan"); setError(null); }}
+            error={error}
+          />
         )}
 
         {step === "done" && (
@@ -241,7 +307,7 @@ export default function SignupPage() {
             </p>
             <p className="kw-body-medium mt-2" style={{ color: "var(--color-on-surface-variant)" }}>
               {step === "paying" && "Please do not refresh or close this page."}
-              {step === "paid" && `₹${PLAN_PRICE} received. Setting things up…`}
+              {step === "paid" && `₹${price} received. Setting things up…`}
               {step === "provisioning" && "Assigning your number and reading up on your business. This can take a minute."}
             </p>
           </Card>

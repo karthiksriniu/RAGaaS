@@ -91,6 +91,9 @@ export default function AdminNumbersPage() {
           <Link href="/admin/tenants">
             <Button type="button" variant="text" icon="group">Tenants</Button>
           </Link>
+          <Link href="/admin/billing">
+            <Button type="button" variant="text" icon="payments">Billing</Button>
+          </Link>
           <Link href="/admin">
             <Button type="button" variant="text" icon="arrow_back">Admin</Button>
           </Link>

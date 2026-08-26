@@ -50,6 +50,7 @@ const before = await db.query(`
     (select count(*)::int from public.chunks)             as chunks,
     (select count(*)::int from public.kb_files)           as files,
     (select count(*)::int from public.business_accounts)  as accounts,
+    (select count(*)::int from public.payment_orders)     as payments,
     (select count(*)::int from public.phone_number_pool
        where tenant_id is not null)                       as claimed_numbers`);
 console.log("\nBEFORE:", before.rows[0]);
@@ -76,6 +77,13 @@ try {
   await db.query(`DELETE FROM public.chunks            WHERE tenant_id NOT IN (${keepList})`);
   await db.query(`DELETE FROM public.kb_files          WHERE tenant_id NOT IN (${keepList})`);
   await db.query(`DELETE FROM public.business_accounts WHERE tenant_id NOT IN (${keepList})`);
+  // Payment orders reference tenants, so the tenant delete below fails outright
+  // without this. Orders with no tenant go too: they are signups that paid and
+  // never finished, and leaving one behind would let the next signup on that
+  // mobile resume onto a payment from a wiped environment.
+  await db.query(
+    `DELETE FROM public.payment_orders WHERE tenant_id IS NULL OR tenant_id NOT IN (${keepList})`
+  );
   // Hand the numbers back to the pool rather than deleting the rows: we still
   // own and pay for them, and the point of this reset is to re-use them.
   await db.query(`UPDATE public.phone_number_pool SET tenant_id = NULL, claimed_at = NULL`);
@@ -98,6 +106,7 @@ const after = await db.query(`
     (select count(*)::int from public.chunks)             as chunks,
     (select count(*)::int from public.kb_files)           as files,
     (select count(*)::int from public.business_accounts)  as accounts,
+    (select count(*)::int from public.payment_orders)     as payments,
     (select count(*)::int from public.phone_number_pool
        where tenant_id is null)                           as free_numbers`);
 console.log("\nAFTER:", after.rows[0]);

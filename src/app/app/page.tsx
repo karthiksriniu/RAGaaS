@@ -10,6 +10,7 @@ import { ListItem } from "@/components/kiowa/ListItem";
 import { IconButton } from "@/components/kiowa/IconButton";
 import { ProgressIndicator } from "@/components/kiowa/ProgressIndicator";
 import { Logo } from "@/components/Logo";
+import { PLAN_FEATURES, UpiPayment, type PaymentInstructions } from "@/components/UpiPayment";
 
 type Section = "settings" | "knowledge" | "config";
 
@@ -26,6 +27,10 @@ interface Me {
   voicePresets: { id: string; label: string; description: string }[];
   kbEnhancementStatus: "pending" | "done" | "failed" | null;
   kbEnhancementError: string | null;
+  licenseExpiresAt: string | null;
+  /** provisional = they said they paid and we haven't seen the credit yet. */
+  licenseState: "active" | "provisional" | "expired";
+  planPriceInr: number;
 }
 
 interface Source {
@@ -42,6 +47,13 @@ const NAV: { id: Section; label: string; icon: string }[] = [
   { id: "config", label: "Configurations", icon: "tune" },
 ];
 
+/** "26 September 2026" - a plan expiry is read once and acted on, so the long
+ * form is clearer than a numeric date whose day/month order is ambiguous. */
+function formatDate(iso: string | null): string {
+  if (!iso) return "\u2014";
+  return new Date(iso).toLocaleDateString("en-IN", { day: "numeric", month: "long", year: "numeric" });
+}
+
 export default function BusinessDashboard() {
   const router = useRouter();
   const [section, setSection] = useState<Section>("settings");
@@ -52,6 +64,10 @@ export default function BusinessDashboard() {
   const [answerConfig, setAnswerConfig] = useState("");
   const [voicePreset, setVoicePreset] = useState("");
   const [saved, setSaved] = useState<string | null>(null);
+
+  const [renewPayment, setRenewPayment] = useState<PaymentInstructions | null>(null);
+  const [renewing, setRenewing] = useState(false);
+  const [renewError, setRenewError] = useState<string | null>(null);
 
   const [sources, setSources] = useState<Source[]>([]);
   const [uploading, setUploading] = useState(false);
@@ -101,6 +117,46 @@ export default function BusinessDashboard() {
     setSaved(label);
     setTimeout(() => setSaved((s) => (s === label ? null : s)), 2000);
     loadMe();
+  }
+
+  /** Opens a renewal payment. Deliberately NOT the signup endpoint: renewal
+   * extends the licence and leaves the tenant's existing phone number alone. */
+  async function startRenewal() {
+    setRenewError(null);
+    setRenewing(true);
+    try {
+      const res = await fetch("/api/business/payment/order", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ purpose: "renewal" }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.error || "Could not start the payment");
+
+      if (d.mode === "simulated") return finishRenewal(d.orderId);
+      setRenewPayment(d as PaymentInstructions);
+    } catch (e) {
+      setRenewError(e instanceof Error ? e.message : String(e));
+    } finally {
+      setRenewing(false);
+    }
+  }
+
+  async function finishRenewal(orderId: string) {
+    setRenewError(null);
+    try {
+      const res = await fetch("/api/business/renew", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ orderId }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) throw new Error(d.error || "Could not complete the renewal");
+      setRenewPayment(null);
+      await loadMe();
+    } catch (e) {
+      setRenewError(e instanceof Error ? e.message : String(e));
+    }
   }
 
   async function upload(file: File) {
@@ -169,6 +225,23 @@ export default function BusinessDashboard() {
         </Button>
       </header>
 
+      {/* The only warning anyone gets that a provisional licence is running.
+          Without it the agent would simply stop answering on day three with no
+          explanation the business could act on. */}
+      {me?.licenseState === "provisional" && (
+        <div
+          className="flex items-start gap-2 px-6 py-3"
+          style={{ background: "var(--color-tertiary-container)", color: "var(--color-on-tertiary-container)" }}
+        >
+          <span className="material-symbols-rounded" style={{ fontSize: 18 }}>schedule</span>
+          <span className="kw-body-small">
+            Your agent is live. We&apos;re confirming your payment with our bank — usually within a
+            day or two. Full access continues until {formatDate(me?.licenseExpiresAt ?? null)} in
+            the meantime.
+          </span>
+        </div>
+      )}
+
       <div className="mx-auto flex max-w-5xl gap-3 px-3 py-6 sm:gap-8 sm:px-6 sm:py-8">
         <nav className="w-14 shrink-0 sm:w-56">
           {NAV.map((n) => {
@@ -212,6 +285,14 @@ export default function BusinessDashboard() {
                     { label: "Mobile number", value: me?.mobile ?? "—", hint: "Used to sign in. Cannot be changed." },
                     { label: "Account name", value: me?.tenantId ?? "—", hint: "Permanent — it identifies your agent and your data." },
                     { label: "Your phone number", value: me?.voicePhoneNumber ?? "Being assigned", hint: "What your customers dial." },
+                    {
+                      label: "Plan",
+                      value: `\u20b9${me?.planPriceInr ?? 999}/month`,
+                      hint:
+                        me?.licenseState === "provisional"
+                          ? `Active until ${formatDate(me?.licenseExpiresAt ?? null)} while we confirm your payment.`
+                          : `Renews on ${formatDate(me?.licenseExpiresAt ?? null)}.`,
+                    },
                   ].map((f) => (
                     <div key={f.label}>
                       <p className="kw-body-small" style={{ color: "var(--color-on-surface-variant)" }}>{f.label}</p>
@@ -419,6 +500,70 @@ export default function BusinessDashboard() {
           )}
         </main>
       </div>
+
+      {/* Checked on every dashboard load, so an expired plan cannot be walked
+          past. Renewal runs the same UPI flow as signup but through
+          /api/business/renew, which never provisions - the business keeps the
+          number its customers already dial. */}
+      {me?.licenseState === "expired" && (
+        <div
+          className="fixed inset-0 z-50 flex flex-col items-center justify-center overflow-y-auto px-4 py-8"
+          style={{ background: "var(--color-scrim)", backdropFilter: "blur(3px)" }}
+        >
+          <Card variant="elevated" padding={32} style={{ width: "100%", maxWidth: 460 }}>
+            {renewPayment ? (
+              <UpiPayment
+                payment={renewPayment}
+                onSettled={finishRenewal}
+                onCancel={() => setRenewPayment(null)}
+                error={renewError}
+              />
+            ) : (
+              <>
+                <h1 className="kw-headline-small mb-1">Your plan has expired</h1>
+                <p className="kw-body-medium mb-5" style={{ color: "var(--color-on-surface-variant)" }}>
+                  Your agent has stopped answering calls. Renew to bring it back — you keep
+                  {me?.voicePhoneNumber ? ` ${me.voicePhoneNumber}, ` : " "}
+                  the same number your customers already dial.
+                </p>
+                <Card variant="filled" padding={20} selected>
+                  <div className="flex items-baseline justify-between">
+                    <span className="kw-title-medium">Standard</span>
+                    <span className="kw-headline-small">
+                      ₹{me?.planPriceInr ?? 999}
+                      <span className="kw-body-medium">/month</span>
+                    </span>
+                  </div>
+                  <ul className="mt-3 flex flex-col gap-1">
+                    {PLAN_FEATURES.map((f) => (
+                      <li key={f} className="kw-body-medium" style={{ color: "var(--color-on-surface-variant)" }}>• {f}</li>
+                    ))}
+                  </ul>
+                </Card>
+                {renewError && (
+                  <p className="kw-body-small mt-3" style={{ color: "var(--color-error)" }}>{renewError}</p>
+                )}
+                <div className="mt-6">
+                  <Button variant="filled" fullWidth disabled={renewing} onClick={startRenewal}>
+                    {renewing ? "Please wait…" : `Renew for ₹${me?.planPriceInr ?? 999}`}
+                  </Button>
+                </div>
+                <div className="mt-2 text-center">
+                  <Button
+                    variant="text"
+                    onClick={async () => {
+                      await fetch("/api/business/logout", { method: "POST" });
+                      router.push("/login");
+                    }}
+                  >
+                    Sign out
+                  </Button>
+                </div>
+              </>
+            )}
+          </Card>
+        </div>
+      )}
     </div>
   );
 }

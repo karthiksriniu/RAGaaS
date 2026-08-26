@@ -1,4 +1,5 @@
 import { pool } from "@/lib/db";
+import { PROVISIONAL_DAYS } from "@/lib/upi";
 
 export interface Tenant {
   id: string;
@@ -228,6 +229,57 @@ export async function updateTenantLicense(
   );
   if (result.rows.length === 0) throw new TenantNotFoundError(id);
   return mapRow(result.rows[0]);
+}
+
+export type LicenseKind = "provisional" | "full";
+
+/** Extends a tenant's licence off the back of a payment.
+ *
+ * `base` is the moment the payment was made (the order's claim time), NOT the
+ * moment confirmation happened. Confirmation can take up to three days, and
+ * measuring from it would hand out 30-33 days depending on how quickly someone
+ * got to the admin queue. Anchored to the payment, every tenant's month is the
+ * same length and the provisional days are absorbed rather than added on top.
+ *
+ * The arithmetic is Postgres's `interval '1 month'`, which is calendar-correct
+ * where JavaScript's setMonth is not: 31 January + 1 month is 28 February here,
+ * and 3 March in JS.
+ *
+ * greatest() makes this monotonic - a grant can only ever push the expiry
+ * further out. That is what keeps the two-step claim-then-confirm path honest:
+ * the 3-day provisional grant lands first, the full month replaces it, and a
+ * replayed or out-of-order confirmation cannot shorten a live licence. */
+export async function grantLicense(
+  tenantId: string,
+  kind: LicenseKind,
+  base: Date
+): Promise<string> {
+  if (tenantId === PROTECTED_TENANT_ID) throw new DefaultTenantProtectedError();
+  const interval = kind === "full" ? "1 month" : `${PROVISIONAL_DAYS} days`;
+  const result = await pool.query<{ license_expires_at: string }>(
+    `UPDATE tenants
+        SET license_expires_at = greatest($2::timestamptz + $3::interval, license_expires_at)
+      WHERE id = $1 AND archived_at IS NULL
+      RETURNING license_expires_at`,
+    [tenantId, base.toISOString(), interval]
+  );
+  if (result.rows.length === 0) throw new TenantNotFoundError(tenantId);
+  return result.rows[0].license_expires_at;
+}
+
+/** Ends a tenant's licence now. Used when a payment is confirmed NOT to have
+ * arrived, so a rejected claim stops the agent immediately instead of running
+ * out the rest of its provisional days. */
+export async function expireLicenseNow(tenantId: string): Promise<void> {
+  if (tenantId === PROTECTED_TENANT_ID) throw new DefaultTenantProtectedError();
+  await pool.query(
+    "UPDATE tenants SET license_expires_at = now() WHERE id = $1 AND archived_at IS NULL",
+    [tenantId]
+  );
+}
+
+export function isLicenseExpired(licenseExpiresAt: string | null): boolean {
+  return !!licenseExpiresAt && new Date(licenseExpiresAt) <= new Date();
 }
 
 export async function updateTenantWhatsappNumber(

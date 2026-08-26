@@ -208,3 +208,49 @@ begin
     grant select, insert, update, delete on kb_files to app_runtime;
   end if;
 end $$;
+
+-- ── Billing: ₹999 UPI payments ────────────────────────────────────────────
+-- Mirrors scripts/migrations/005-upi-payments.sql, which is what an existing
+-- environment runs; this block is what a fresh one gets. See that file for the
+-- reasoning behind each column.
+create table if not exists platform_settings (
+  key text primary key,
+  value text not null,
+  updated_at timestamptz not null default now()
+);
+
+insert into platform_settings (key, value) values
+  ('upi_vpa', 'karthik.sreeni@cub'),
+  ('upi_payee_name', 'MyBizCare'),
+  ('plan_price_inr', '999')
+on conflict (key) do nothing;
+
+create table if not exists payment_orders (
+  id text primary key,
+  mobile text not null,
+  tenant_id text references tenants(id),
+  purpose text not null check (purpose in ('signup', 'renewal')),
+  amount_paise integer not null,
+  vpa text not null,
+  payee_name text not null,
+  status text not null check (status in ('pending', 'claimed', 'confirmed', 'rejected', 'expired')),
+  utr text,
+  claimed_at timestamptz,
+  confirmed_at timestamptz,
+  confirmed_by text,
+  licensed_until timestamptz,
+  qr_expires_at timestamptz not null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists payment_orders_mobile_idx on payment_orders (mobile, created_at desc);
+create index if not exists payment_orders_open_idx on payment_orders (status)
+  where status in ('pending', 'claimed');
+
+do $$
+begin
+  if exists (select 1 from pg_roles where rolname = 'app_runtime') then
+    grant select, insert, update, delete on platform_settings to app_runtime;
+    grant select, insert, update, delete on payment_orders    to app_runtime;
+  end if;
+end $$;

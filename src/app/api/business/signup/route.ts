@@ -9,6 +9,9 @@ import {
 } from "@/lib/businessAuth";
 import { provisionTenant, enhanceKbFromWebsite } from "@/lib/provisionTenant";
 import { checkRateLimit } from "@/lib/rateLimit";
+import { attachTenantToOrder, getOrder, setOrderLicensedUntil } from "@/lib/billing";
+import { grantLicense } from "@/lib/tenants";
+import { licenseKindFor, upiPaymentsEnabled } from "@/lib/upi";
 
 export const runtime = "nodejs";
 // Provisioning creates a tenant, claims a number and generates a starter KB
@@ -18,14 +21,18 @@ export const runtime = "nodejs";
 // answers in roughly 25s.
 export const maxDuration = 300;
 
-/** Completes signup after the (bypassed) payment step: creates the tenant,
- * claims a pooled number, seeds the agent, and logs the owner in.
+/** Completes signup after the payment step: creates the tenant, claims a
+ * pooled number, seeds the agent, licenses it, and logs the owner in.
  *
  * The mobile must already have been OTP-verified. That is enforced by
  * requiring the number to have no outstanding challenge AND not already own an
- * account - a caller who never verified would still hold a live challenge row. */
+ * account - a caller who never verified would still hold a live challenge row.
+ *
+ * It must also have paid. The order carries how much licence that payment is
+ * worth: three days for a payer's own word, a full month once the credit has
+ * actually been seen. See src/lib/upi.ts. */
 export async function POST(req: NextRequest) {
-  const { mobile, businessName, description, website } = await req.json().catch(() => ({}));
+  const { mobile, businessName, description, website, orderId } = await req.json().catch(() => ({}));
   const normalized = normalizeMobile(mobile || "");
   const name = typeof businessName === "string" ? businessName.trim() : "";
 
@@ -47,6 +54,26 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Verify your mobile number first" }, { status: 403 });
   }
 
+  // Proof of payment, and how much licence it is worth. Skipped only where
+  // there is no real payment to make - a staging deployment, where
+  // /api/business/payment/order settles its orders on the spot.
+  const order = typeof orderId === "string" && orderId ? await getOrder(orderId) : null;
+  const licenseKind = order ? licenseKindFor(order.status) : null;
+  if (upiPaymentsEnabled()) {
+    if (!order || order.mobile !== normalized || order.purpose !== "signup") {
+      return NextResponse.json({ error: "Complete the payment first" }, { status: 402 });
+    }
+    // A signup order with a tenant has already been spent. Without this, a
+    // replayed request could hand a second tenant - and a second phone number -
+    // to one payment.
+    if (order.tenantId) {
+      return NextResponse.json({ error: "That payment has already been used" }, { status: 409 });
+    }
+    if (!licenseKind) {
+      return NextResponse.json({ error: "That payment hasn't gone through yet" }, { status: 402 });
+    }
+  }
+
   const existing = await pool.query<{ tenant_id: string }>(
     "SELECT tenant_id FROM business_accounts WHERE mobile = $1",
     [normalized]
@@ -63,6 +90,21 @@ export async function POST(req: NextRequest) {
   }
 
   const provisioned = await provisionTenant(name, desc, site);
+
+  // Licence and payment BEFORE anything slow or best-effort below. A tenant
+  // that exists but is unlicensed answers no calls, so this is the step that
+  // must not be skipped by a later failure - and attaching the tenant to the
+  // order is what marks that payment spent.
+  let licenseExpiresAt: string | null = null;
+  if (order) {
+    await attachTenantToOrder(order.id, provisioned.tenantId);
+    licenseExpiresAt = await grantLicense(
+      provisioned.tenantId,
+      licenseKind ?? "provisional",
+      new Date(order.claimedAt || order.createdAt)
+    );
+    await setOrderLicensedUntil(order.id, licenseExpiresAt);
+  }
 
   // Reading the business's website takes 60-80s. after() runs it once the
   // response has been sent, so the business sees "You're live" immediately
@@ -89,6 +131,8 @@ export async function POST(req: NextRequest) {
     phoneNumber: provisioned.phoneNumber,
     starterKbChunks: provisioned.starterKbChunks,
     readingWebsite: !!provisioned.websiteToRead,
+    licenseExpiresAt,
+    licenseState: licenseKind === "full" ? "active" : "provisional",
   });
   res.cookies.set(BUSINESS_SESSION_COOKIE, createBusinessSession(provisioned.tenantId), {
     httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: 60 * 60 * 24 * 30,

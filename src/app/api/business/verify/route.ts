@@ -6,13 +6,19 @@ import {
   normalizeMobile,
   verifyOtp,
 } from "@/lib/businessAuth";
+import { liveOrderForMobile } from "@/lib/billing";
+import { assertTenantExists, isLicenseExpired } from "@/lib/tenants";
 
 export const runtime = "nodejs";
 
 /** Verifies an OTP. If the number already owns a tenant, logs straight in.
  * Otherwise reports that signup should continue - the tenant is not created
  * here, because it must not exist until the business has been through the plan
- * step. */
+ * step.
+ *
+ * It also reports where an interrupted signup got to. Someone who paid and then
+ * closed the tab has a live order against their mobile and no account; sending
+ * them back to the plan screen would ask them to pay a second time. */
 export async function POST(req: NextRequest) {
   const { mobile, code } = await req.json().catch(() => ({}));
   const normalized = normalizeMobile(mobile || "");
@@ -37,13 +43,27 @@ export async function POST(req: NextRequest) {
 
   if (existing.rows.length > 0) {
     const tenantId = existing.rows[0].tenant_id;
-    const res = NextResponse.json({ ok: true, existing: true, tenantId });
+    const tenant = await assertTenantExists(tenantId).catch(() => null);
+    const res = NextResponse.json({
+      ok: true,
+      existing: true,
+      tenantId,
+      // The dashboard is where renewal actually happens; this only tells the
+      // caller what it is about to land on.
+      licenseExpired: isLicenseExpired(tenant?.licenseExpiresAt ?? null),
+    });
     res.cookies.set(BUSINESS_SESSION_COOKIE, createBusinessSession(tenantId), {
       httpOnly: true, secure: true, sameSite: "lax", path: "/", maxAge: 60 * 60 * 24 * 30,
     });
     return res;
   }
 
-  // Verified, but no account yet - the caller continues to the plan step.
-  return NextResponse.json({ ok: true, existing: false, mobile: normalized });
+  // Verified, no account - but possibly a signup already part-way through.
+  const order = await liveOrderForMobile(normalized, "signup");
+  return NextResponse.json({
+    ok: true,
+    existing: false,
+    mobile: normalized,
+    payment: order ? { orderId: order.id, status: order.status } : null,
+  });
 }

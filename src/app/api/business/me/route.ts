@@ -1,7 +1,13 @@
 import { NextRequest, NextResponse } from "next/server";
 import { pool } from "@/lib/db";
 import { businessTenantId } from "@/lib/businessAuth";
-import { assertTenantExists, TenantNotFoundError, updateTenantAnswerConfig } from "@/lib/tenants";
+import {
+  assertTenantExists,
+  isLicenseExpired,
+  TenantNotFoundError,
+  updateTenantAnswerConfig,
+} from "@/lib/tenants";
+import { getBillingConfig, latestOrderForTenant } from "@/lib/billing";
 import { VOICE_PRESETS, resolveVoicePreset } from "@/lib/voicePresets";
 
 export const runtime = "nodejs";
@@ -28,9 +34,20 @@ export async function GET(req: NextRequest) {
       "SELECT business_description, website_url, kb_enhancement_status, kb_enhancement_error FROM tenants WHERE id = $1",
       [tenantId]
     );
+    // Checked on every dashboard load, which is what makes an expired plan
+    // impossible to walk past: the dashboard blocks on it and offers renewal.
+    const expired = isLicenseExpired(tenant.licenseExpiresAt);
+    const lastOrder = await latestOrderForTenant(tenant.id);
+    const awaitingConfirmation = lastOrder?.status === "claimed";
+
     return NextResponse.json({
       tenantId: tenant.id,
       businessName: tenant.name,
+      licenseExpiresAt: tenant.licenseExpiresAt,
+      // 'provisional' is the honest state between "you said you paid" and "we
+      // saw the money": full access, and three days for it to be confirmed.
+      licenseState: expired ? "expired" : awaitingConfirmation ? "provisional" : "active",
+      planPriceInr: (await getBillingConfig()).priceInr,
       subdomain: tenant.subdomain,
       mobile: acct.rows[0]?.mobile ?? null,
       description: desc.rows[0]?.business_description ?? null,
