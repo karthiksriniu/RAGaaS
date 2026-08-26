@@ -46,7 +46,7 @@ jobs:
           # to start there with an unhelpful "exec format error".
           platforms: linux/amd64
           tags: |
-            ghcr.io/${{ github.repository_owner }}/mybizcare-voice-worker:latest
+            ghcr.io/${{ github.repository_owner }}/mybizcare-voice-worker:${{ github.ref_name }}
             ghcr.io/${{ github.repository_owner }}/mybizcare-voice-worker:${{ github.sha }}
           cache-from: type=gha
           cache-to: type=gha,mode=max
