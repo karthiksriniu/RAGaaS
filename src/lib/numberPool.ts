@@ -1,4 +1,5 @@
 import { pool } from "@/lib/db";
+import { allowNumberOnInboundTrunk, isLiveKitConfigured } from "@/lib/livekitSip";
 
 // Every operation that changes who owns a phone number.
 //
@@ -153,10 +154,27 @@ export async function releaseNumber(e164: string): Promise<void> {
 }
 
 /** Adds a number we have bought at the carrier to the pool, so signup can hand
- * it out. Idempotent: re-adding an existing number leaves its holder alone. */
+ * it out. Idempotent: re-adding an existing number leaves its holder alone.
+ *
+ * Also tells LiveKit to accept calls for it. Owning a number at the carrier is
+ * only half of making it ring: without the inbound-trunk allowlist entry the
+ * number is handed to a business at signup and then silently refuses every
+ * call, with nothing logged. Doing it here means a number is answerable from
+ * the moment it enters the pool rather than from whenever someone remembers. */
 export async function addNumberToPool(e164: string): Promise<void> {
   await pool.query(
     "INSERT INTO phone_number_pool (e164) VALUES ($1) ON CONFLICT (e164) DO NOTHING",
     [e164]
   );
+  if (!isLiveKitConfigured()) {
+    console.error(`[number-pool] ${e164} added but LiveKit is not configured - it will NOT answer calls`);
+    return;
+  }
+  // Best-effort: the number is in the pool either way, and claimPooledNumber
+  // tries again when it is handed out.
+  try {
+    await allowNumberOnInboundTrunk(e164);
+  } catch (err) {
+    console.error(`[number-pool] ${e164} added but LiveKit would not accept it:`, err);
+  }
 }

@@ -47,6 +47,40 @@ function recyclingEnabled(): boolean {
   return process.env.NUMBER_POOL_RECYCLE === "true";
 }
 
+/** Makes sure LiveKit will actually answer for a number we are about to hand
+ * to a business.
+ *
+ * This used to happen ONLY in procureNumber, the buy-a-new-number path - so a
+ * number that entered the pool any other way (bought by hand, added through the
+ * admin numbers page, or already sitting in the pool before that code existed)
+ * was claimed at signup, written to the tenant, and shown to the business as
+ * "your customers call this number" while LiveKit refused every call for it.
+ * Nothing logged it, because from LiveKit's point of view the call never
+ * arrived. That is exactly the drift the comment at the top of livekitSip.ts
+ * warns about, and the pooled path is the one signup actually uses.
+ *
+ * Idempotent, and best-effort in the same way acquireNumber is: a business with
+ * a working account and a number that needs a manual nudge is a better outcome
+ * than a failed signup. It shouts, because the alternative is silence.
+ */
+async function ensureAnswerable(e164: string): Promise<void> {
+  if (!isLiveKitConfigured()) {
+    console.error(
+      `[number-pool] ${e164} handed out but LiveKit is not configured - it will NOT answer calls`
+    );
+    return;
+  }
+  try {
+    await allowNumberOnInboundTrunk(e164);
+  } catch (err) {
+    console.error(
+      `[number-pool] ${e164} handed out but could not be added to the LiveKit inbound trunk - ` +
+        `it will NOT answer calls until it is:`,
+      err
+    );
+  }
+}
+
 /** Claims a free number from the pre-bought pool.
  *
  * The UPDATE ... WHERE tenant_id IS NULL is what makes this safe: two
@@ -70,6 +104,7 @@ export async function claimPooledNumber(tenantId: string): Promise<string | null
   const e164 = res.rows[0]?.e164 ?? null;
   if (e164) {
     await pool.query("UPDATE tenants SET voice_phone_number = $2 WHERE id = $1", [tenantId, e164]);
+    await ensureAnswerable(e164);
     return e164;
   }
 
@@ -114,6 +149,7 @@ async function recycleOldestNumber(tenantId: string): Promise<string | null> {
     );
     await client.query("UPDATE tenants SET voice_phone_number = $2 WHERE id = $1", [tenantId, row.e164]);
     await client.query("COMMIT");
+    await ensureAnswerable(row.e164);
 
     // Loud on purpose: someone lost their phone line.
     console.warn(
