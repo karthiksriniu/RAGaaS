@@ -198,6 +198,25 @@ async function checkDeployment() {
     },
   ];
 
+  // Delivery channel, checked separately because it is the one thing that
+  // looks fine right up until a real person cannot sign up.
+  try {
+    const res = await fetch(`${BASE_URL}/api/business/otp`);
+    const { channel } = await res.json();
+    if (channel === "none") {
+      const staging = BASE_URL.includes("staging.");
+      (staging ? warn : fail)(
+        staging
+          ? "no OTP delivery channel - codes are shown on screen (fine for staging)"
+          : "NO OTP DELIVERY CHANNEL - nobody can sign up or log in on this deployment"
+      );
+    } else {
+      pass(`OTP codes deliver via ${channel}`);
+    }
+  } catch (err) {
+    fail(`could not read the OTP delivery channel: ${err.message}`);
+  }
+
   for (const probe of probes) {
     try {
       const res = await fetch(`${BASE_URL}${probe.path}`, { method: probe.method });

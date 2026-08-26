@@ -5,6 +5,19 @@ import { checkRateLimit } from "@/lib/rateLimit";
 
 export const runtime = "nodejs";
 
+/** Which channel this deployment will deliver on, without sending anything.
+ *
+ * Exists because the only other way to find out is to POST, and POSTing now
+ * rings a real phone and spends real money. A misconfigured delivery channel
+ * is invisible until someone tries to sign up, which is the worst possible
+ * moment to discover it - so preflight checks this before a cutover.
+ *
+ * Deliberately returns the channel NAME only. It says nothing about which
+ * credentials are set, and carries no secret. */
+export async function GET() {
+  return NextResponse.json({ channel: configuredChannel() });
+}
+
 /** Issues an OTP for signup or login. Same endpoint for both: the mobile is the
  * identity either way, and whether an account exists is decided at verify time
  * so this cannot be used to enumerate which numbers are registered. */
