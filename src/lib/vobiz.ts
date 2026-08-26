@@ -21,6 +21,8 @@
 //    so numbers cannot be bound to a trunk until the account is upgraded.
 //    provisionNumber() will fail at that step until then.
 
+import { normalizeMobile } from "@/lib/mobile";
+
 const VOBIZ_BASE = "https://api.vobiz.ai/api/v1";
 
 /** Name of the shared inbound trunk. Looked up by name so provisioning is
@@ -220,7 +222,13 @@ export async function listOwnedNumbers(): Promise<{ e164: string }[]> {
  * ever need to prove whether a call was actually delivered. */
 export async function placeOtpCall(to: string, answerUrl: string): Promise<string> {
   const cfg = config();
-  const from = process.env.OTP_CALLER_NUMBER;
+  // Normalised, not passed through. This value is typed by hand into a Vercel
+  // field, so it arrives as "+91 80715 80725", "08071580725" or "918071580725"
+  // as often as not - and Vobiz rejects those with an error that surfaces to
+  // the person signing up as "check the number", pointing at the wrong number
+  // entirely.
+  const raw = process.env.OTP_CALLER_NUMBER;
+  const from = raw ? normalizeMobile(raw) : null;
   if (!from) throw new VobizNotConfiguredError();
 
   const res = await vobiz<{ request_uuid?: string; call_uuid?: string }>(

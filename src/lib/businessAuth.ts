@@ -1,6 +1,10 @@
 import { randomBytes, createHmac, timingSafeEqual, createHash } from "crypto";
 import type { NextRequest } from "next/server";
 import { pool } from "@/lib/db";
+import { normalizeMobile } from "@/lib/mobile";
+
+// Re-exported so the many routes importing it from here keep working.
+export { normalizeMobile };
 import {
   generateCode,
   configuredChannel,
@@ -44,18 +48,6 @@ function sign(payload: string): string {
   return createHmac("sha256", secret()).update(payload).digest("hex");
 }
 
-/** Indian mobile numbers, normalised to E.164 so one person cannot end up with
- * two accounts by typing the same number two ways. */
-export function normalizeMobile(raw: string): string | null {
-  const digits = (raw || "").replace(/[^\d+]/g, "");
-  let n = digits;
-  if (n.startsWith("+")) n = n.slice(1);
-  if (n.startsWith("00")) n = n.slice(2);
-  if (n.startsWith("91") && n.length === 12) n = n.slice(2);
-  if (n.startsWith("0") && n.length === 11) n = n.slice(1);
-  if (!/^[6-9]\d{9}$/.test(n)) return null; // Indian mobiles start 6-9
-  return `+91${n}`;
-}
 
 function hashCode(mobile: string, code: string): string {
   // Salted by mobile so identical codes for different numbers don't collide,

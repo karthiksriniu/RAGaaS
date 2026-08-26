@@ -22,7 +22,18 @@ export async function GET() {
   // values. Diagnosing "configured but still reports none" across five
   // variables otherwise costs a redeploy per guess.
   const onStaging = (process.env.TENANT_ROOT_DOMAIN || "").startsWith("staging.");
-  return NextResponse.json({ channel, ...(onStaging ? { missing: missingSettings() } : {}) });
+  return NextResponse.json({
+    channel,
+    ...(onStaging
+      ? {
+          missing: missingSettings(),
+          // The number that will show as caller ID. Not a secret - every
+          // recipient sees it - and seeing the RESOLVED value is what turns
+          // "it just fails" into an obvious typo.
+          callerNumber: normalizeMobile(process.env.OTP_CALLER_NUMBER || "") ?? "INVALID OR UNSET",
+        }
+      : {}),
+  });
 }
 
 /** Issues an OTP for signup or login. Same endpoint for both: the mobile is the
