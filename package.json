@@ -17,6 +17,7 @@
     "@breezystack/lamejs": "^1.2.7",
     "dotenv": "^17.4.2",
     "exceljs": "^4.4.0",
+    "livekit-server-sdk": "^2.18.0",
     "mammoth": "^1.12.0",
     "next": "^16.2.11",
     "pg": "^8.22.0",

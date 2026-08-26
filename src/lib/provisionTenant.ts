@@ -4,6 +4,8 @@ import { createTenant } from "@/lib/tenants";
 import { ingestText } from "@/lib/ingestText";
 import { normalizeWebsite } from "@/lib/websiteUrl";
 import { DEFAULT_ANSWER_STYLE_MD } from "@/lib/answerStyle";
+import { listInventoryNumbers, provisionNumber } from "@/lib/vobiz";
+import { allowNumberOnInboundTrunk, isLiveKitConfigured } from "@/lib/livekitSip";
 
 // Everything that happens after a business "pays": create its tenant, give it a
 // number, and make its agent useful on day one.
@@ -123,6 +125,84 @@ async function recycleOldestNumber(tenantId: string): Promise<string | null> {
     throw err;
   } finally {
     client.release();
+  }
+}
+
+/** DEMO ONLY, as above. */
+function liveProcurementEnabled(): boolean {
+  return process.env.NUMBER_LIVE_PROCUREMENT === "true";
+}
+
+/** Buys a fresh number from Vobiz and makes it answerable.
+ *
+ * Three things have to be true before a number actually rings an agent, and
+ * only the first costs money:
+ *   1. We own it (Vobiz purchase).
+ *   2. Vobiz points it at our LiveKit SIP endpoint (the trunk assignment).
+ *   3. LiveKit is willing to accept calls for it (the inbound trunk allowlist).
+ * Miss the third and the number rings out forever with nothing logged, because
+ * as far as LiveKit is concerned the call never arrived.
+ *
+ * The number is recorded in the pool AS SOON AS it is bought, before anything
+ * that can still fail. That ordering is deliberate: purchase is the only
+ * irreversible step, and a number we paid for but never wrote down is money
+ * gone with no way to find it again. Recorded first, a later failure leaves a
+ * usable number sitting unclaimed in the pool for the next signup or for the
+ * admin numbers page, rather than an orphan. */
+async function procureNumber(tenantId: string): Promise<string | null> {
+  const inventory = await listInventoryNumbers("IN");
+  const candidate = inventory[0]?.e164;
+  if (!candidate) {
+    console.error("[number-procure] Vobiz inventory returned no Indian numbers");
+    return null;
+  }
+
+  // Spends money. Everything after this point must be recoverable.
+  const { e164 } = await provisionNumber(candidate);
+
+  await pool.query(
+    "INSERT INTO phone_number_pool (e164) VALUES ($1) ON CONFLICT (e164) DO NOTHING",
+    [e164]
+  );
+
+  if (isLiveKitConfigured()) {
+    await allowNumberOnInboundTrunk(e164);
+  } else {
+    // Loud: the number exists and is paid for, but nothing will answer it.
+    console.error(
+      `[number-procure] ${e164} bought but LiveKit is not configured - it will not answer calls`
+    );
+  }
+
+  const claimed = await pool.query(
+    "UPDATE phone_number_pool SET tenant_id = $1, claimed_at = now() WHERE e164 = $2 AND tenant_id IS NULL RETURNING e164",
+    [tenantId, e164]
+  );
+  if (claimed.rows.length === 0) return null;
+
+  await pool.query("UPDATE tenants SET voice_phone_number = $2 WHERE id = $1", [tenantId, e164]);
+  console.log(`[number-procure] ${e164} bought and assigned to "${tenantId}"`);
+  return e164;
+}
+
+/** A working phone number for a new tenant, however we can get one.
+ *
+ * The pre-bought pool is tried FIRST even when live procurement is on. Numbers
+ * already paid for should be used before spending again, and it keeps the two
+ * demo numbers doing their job on staging. */
+export async function acquireNumber(tenantId: string): Promise<string | null> {
+  const pooled = await claimPooledNumber(tenantId);
+  if (pooled) return pooled;
+  if (!liveProcurementEnabled()) return null;
+
+  try {
+    return await procureNumber(tenantId);
+  } catch (err) {
+    // Never fails the signup. A business with a working account and no number
+    // yet is a far better outcome than a failed signup, and the number can be
+    // assigned from the admin page afterwards.
+    console.error(`[number-procure] failed for "${tenantId}":`, err);
+    return null;
   }
 }
 
@@ -250,23 +330,38 @@ export async function provisionTenant(
     [tenantId, trimmed || null, DEFAULT_ANSWER_STYLE_MD, website]
   );
 
-  const phoneNumber = await claimPooledNumber(tenantId);
-
-  // The FAST pass only: name and description, no website. Reading a site takes
-  // 60-80s, which is far too long to hold someone on the provisioning screen,
-  // so it runs afterwards - see enhanceKbFromWebsite().
-  let starterKbChunks = 0;
-  if (trimmed) {
-    try {
+  // Number and knowledge base CONCURRENTLY. They share no state, and run
+  // sequentially they simply add up: buying a number is several Vobiz and
+  // LiveKit round trips, and the starter KB is an LLM call. Overlapped, the
+  // business waits for the slower of the two instead of the sum.
+  //
+  // allSettled, not all: these fail independently and neither should take the
+  // other down. A tenant with a knowledge base and no number is recoverable
+  // from the admin page; a tenant with a number and no KB still answers calls.
+  //
+  // The FAST KB pass only - name and description, no website. Reading a site
+  // takes 60-80s, far too long to hold someone on the provisioning screen, so
+  // it runs afterwards. See enhanceKbFromWebsite().
+  const [numberResult, kbResult] = await Promise.allSettled([
+    acquireNumber(tenantId),
+    (async () => {
+      if (!trimmed) return 0;
       const md = await generateStarterKb(businessName, trimmed, null);
-      if (md) {
-        const r = await ingestText(tenantId, STARTER_KB_SOURCE, md, "generated");
-        starterKbChunks = r.chunksIngested;
-      }
-    } catch (err) {
-      // Best-effort by design - see the docstring above.
-      console.error(`starter KB generation failed for ${tenantId}:`, err);
-    }
+      if (!md) return 0;
+      const r = await ingestText(tenantId, STARTER_KB_SOURCE, md, "generated");
+      return r.chunksIngested;
+    })(),
+  ]);
+
+  const phoneNumber = numberResult.status === "fulfilled" ? numberResult.value : null;
+  if (numberResult.status === "rejected") {
+    console.error(`number acquisition failed for ${tenantId}:`, numberResult.reason);
+  }
+
+  const starterKbChunks = kbResult.status === "fulfilled" ? kbResult.value : 0;
+  if (kbResult.status === "rejected") {
+    // Best-effort by design - see the docstring above.
+    console.error(`starter KB generation failed for ${tenantId}:`, kbResult.reason);
   }
 
   // Only mark work pending when there is actually a site to read, so the

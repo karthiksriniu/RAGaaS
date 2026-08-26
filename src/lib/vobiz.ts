@@ -209,3 +209,25 @@ export async function listOwnedNumbers(): Promise<{ e164: string }[]> {
   );
   return data.data ?? data.numbers ?? [];
 }
+
+/** Places an outbound call that reads a verification code aloud.
+ *
+ * `answer_url` is fetched by Vobiz the moment the callee picks up, and whatever
+ * XML it returns is what they hear - so the code itself never travels in this
+ * request. See otpVoiceToken.ts for why it does not travel in the URL either.
+ *
+ * Returns the call UUID, which is what a CDR lookup would be keyed on if we
+ * ever need to prove whether a call was actually delivered. */
+export async function placeOtpCall(to: string, answerUrl: string): Promise<string> {
+  const cfg = config();
+  const from = process.env.OTP_CALLER_NUMBER;
+  if (!from) throw new VobizNotConfiguredError();
+
+  const res = await vobiz<{ request_uuid?: string; call_uuid?: string }>(
+    cfg,
+    "POST",
+    `/Account/${cfg.authId}/Call/`,
+    { from, to, answer_url: answerUrl, answer_method: "GET" }
+  );
+  return res.call_uuid || res.request_uuid || "";
+}
