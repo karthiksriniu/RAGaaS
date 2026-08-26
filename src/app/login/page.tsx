@@ -6,6 +6,7 @@ import Link from "next/link";
 import { Button } from "@/components/kiowa/Button";
 import { Card } from "@/components/kiowa/Card";
 import { TextField } from "@/components/kiowa/TextField";
+import { MobileField, toE164 } from "@/components/MobileField";
 import { Logo } from "@/components/Logo";
 
 /** Business sign-in. Same OTP endpoints as signup - the mobile number is the
@@ -30,7 +31,7 @@ export default function BusinessLogin() {
   async function requestCode() {
     setError(null); setBusy(true);
     try {
-      const d = await post("/api/business/otp", { mobile });
+      const d = await post("/api/business/otp", { mobile: toE164(mobile) });
       setDevCode(d.devCode ?? null);
       setChannel(d.channel ?? "none");
       setSent(true);
@@ -41,7 +42,7 @@ export default function BusinessLogin() {
   async function verify() {
     setError(null); setBusy(true);
     try {
-      const d = await post("/api/business/verify", { mobile, code });
+      const d = await post("/api/business/verify", { mobile: toE164(mobile), code });
       if (!d.existing) {
         setError("No account for this number yet — sign up first.");
         return;
@@ -67,7 +68,7 @@ export default function BusinessLogin() {
               : "We\u2019ll send a code to your mobile."}
         </p>
 
-        <TextField fullWidth label="Mobile number" value={mobile} onChange={(e) => setMobile(e.target.value)} type="tel" disabled={sent} />
+        <MobileField value={mobile} onChange={setMobile} disabled={sent} />
 
         {sent && (
           <>

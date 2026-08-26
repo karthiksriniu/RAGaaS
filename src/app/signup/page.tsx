@@ -9,6 +9,7 @@ import { Textarea } from "@/components/kiowa/Textarea";
 import { ProgressIndicator } from "@/components/kiowa/ProgressIndicator";
 import { Logo } from "@/components/Logo";
 import { VoiceDictation } from "@/components/VoiceDictation";
+import { MobileField, toE164 } from "@/components/MobileField";
 
 type Step = "details" | "otp" | "plan" | "paying" | "paid" | "provisioning" | "done";
 
@@ -44,7 +45,7 @@ export default function SignupPage() {
     if (businessName.trim().length < 2) return setError("Please enter your business name");
     setBusy(true);
     try {
-      const d = await post("/api/business/otp", { mobile });
+      const d = await post("/api/business/otp", { mobile: toE164(mobile) });
       setDevCode(d.devCode ?? null);
       setChannel(d.channel ?? "none");
       setStep("otp");
@@ -59,7 +60,7 @@ export default function SignupPage() {
     setError(null);
     setBusy(true);
     try {
-      const d = await post("/api/business/verify", { mobile, code });
+      const d = await post("/api/business/verify", { mobile: toE164(mobile), code });
       // Already registered: the cookie is set, so go straight to the dashboard.
       if (d.existing) return router.push("/app");
       setStep("plan");
@@ -81,7 +82,7 @@ export default function SignupPage() {
 
     setStep("provisioning");
     try {
-      const d = await post("/api/business/signup", { mobile, businessName, description, website });
+      const d = await post("/api/business/signup", { mobile: toE164(mobile), businessName, description, website });
       setResult({ phoneNumber: d.phoneNumber ?? null, tenantId: d.tenantId });
       setStep("done");
     } catch (e) {
@@ -137,7 +138,7 @@ export default function SignupPage() {
               </p>
             </div>
             <div className="mt-4">
-              <TextField fullWidth label="Mobile number" value={mobile} onChange={(e) => setMobile(e.target.value)} type="tel" />
+              <MobileField value={mobile} onChange={setMobile} disabled={busy} />
             </div>
             {error && <p className="kw-body-small mt-3" style={{ color: "var(--color-error)" }}>{error}</p>}
             <div className="mt-6">
@@ -153,10 +154,10 @@ export default function SignupPage() {
             <h1 className="kw-headline-small mb-1">Verify your number</h1>
             <p className="kw-body-medium mb-6" style={{ color: "var(--color-on-surface-variant)" }}>
               {channel === "vobiz-voice"
-                ? `We're calling ${mobile} now — we'll read out a 6-digit code.`
+                ? `We're calling ${toE164(mobile)} now — we'll read out a 6-digit code.`
                 : channel === "whatsapp"
-                  ? `We sent a 6-digit code to ${mobile} on WhatsApp.`
-                  : `We sent a 6-digit code to ${mobile}.`}
+                  ? `We sent a 6-digit code to ${toE164(mobile)} on WhatsApp.`
+                  : `We sent a 6-digit code to ${toE164(mobile)}.`}
             </p>
             {devCode && (
               <p className="kw-body-small mb-4 rounded-lg p-3" style={{ background: "var(--color-tertiary-container)", color: "var(--color-on-tertiary-container)" }}>
