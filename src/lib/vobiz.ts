@@ -70,24 +70,42 @@ export class VobizNotConfiguredError extends Error {
   }
 }
 
-interface VobizConfig {
+/** Just enough to talk to Vobiz at all. */
+interface VobizCredentials {
   authId: string;
   authToken: string;
+}
+
+/** Credentials PLUS where inbound calls should be handed over. Only the trunk
+ * and number-provisioning paths need this. */
+interface VobizConfig extends VobizCredentials {
   livekitSipUri: string;
 }
 
-function config(): VobizConfig {
+function credentials(): VobizCredentials {
   const authId = process.env.VOBIZ_AUTH_ID;
   const authToken = process.env.VOBIZ_AUTH_TOKEN;
+  if (!authId || !authToken) throw new VobizNotConfiguredError();
+  return { authId, authToken };
+}
+
+/** Separate from credentials() on purpose. Requiring the inbound SIP URI for
+ * every Vobiz call meant placing an OUTBOUND verification call - which has
+ * nothing to do with where inbound calls are handed over - failed on any
+ * deployment that had never provisioned a number. The person signing up was
+ * told to check their own number; the actual cause was an unset variable they
+ * had no way of knowing about, and no LiveKit involvement at all. */
+function config(): VobizConfig {
+  const creds = credentials();
   // The SIP URI LiveKit gives you for the inbound trunk, e.g.
   // sip:xxxx.sip.livekit.cloud - this is where Vobiz hands calls over.
   const livekitSipUri = process.env.LIVEKIT_SIP_URI;
-  if (!authId || !authToken || !livekitSipUri) throw new VobizNotConfiguredError();
-  return { authId, authToken, livekitSipUri };
+  if (!livekitSipUri) throw new VobizNotConfiguredError();
+  return { ...creds, livekitSipUri };
 }
 
 async function vobiz<T>(
-  cfg: VobizConfig,
+  cfg: VobizCredentials,
   method: "GET" | "POST" | "DELETE",
   path: string,
   body?: unknown
@@ -123,7 +141,7 @@ export async function listInventoryNumbers(
   search?: string,
   perPage = 20
 ): Promise<InventoryNumber[]> {
-  const cfg = config();
+  const cfg = credentials();
   const params = new URLSearchParams({ country, per_page: String(perPage) });
   if (search) params.set("search", search);
   const data = await vobiz<{ data?: InventoryNumber[]; numbers?: InventoryNumber[] }>(
@@ -203,7 +221,7 @@ export async function provisionNumber(e164: string): Promise<ProvisionedNumber> 
  * we own against what the tenants table says, so a purchase that succeeded
  * while the follow-up DB write failed can be spotted rather than orphaned. */
 export async function listOwnedNumbers(): Promise<{ e164: string }[]> {
-  const cfg = config();
+  const cfg = credentials();
   const data = await vobiz<{ data?: { e164: string }[]; numbers?: { e164: string }[] }>(
     cfg,
     "GET",
@@ -221,7 +239,7 @@ export async function listOwnedNumbers(): Promise<{ e164: string }[]> {
  * Returns the call UUID, which is what a CDR lookup would be keyed on if we
  * ever need to prove whether a call was actually delivered. */
 export async function placeOtpCall(to: string, answerUrl: string): Promise<string> {
-  const cfg = config();
+  const cfg = credentials();
   // Normalised, not passed through. This value is typed by hand into a Vercel
   // field, so it arrives as "+91 80715 80725", "08071580725" or "918071580725"
   // as often as not - and Vobiz rejects those with an error that surfaces to
