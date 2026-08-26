@@ -106,9 +106,10 @@ export async function POST(req: NextRequest) {
     await setOrderLicensedUntil(order.id, licenseExpiresAt);
   }
 
-  // Reading the business's website takes 60-80s. after() runs it once the
-  // response has been sent, so the business sees "You're live" immediately
-  // instead of watching a spinner for minutes.
+  // Reading the business's website takes ~20-25s (a 2-level scrape plus one
+  // model call - it was 200s when the model did the fetching). after() runs it
+  // once the response has been sent, so the business sees "You're live"
+  // immediately rather than waiting on it at all.
   //
   // NOT durable: this is still the same invocation, so if the instance dies
   // mid-read the work is lost. That is why the tenant carries a status - a
