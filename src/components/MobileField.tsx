@@ -21,10 +21,13 @@ export interface Country {
   name: string;
   /** How many digits follow the dial code. */
   nationalDigits: number;
+  /** Digit dialled before a national number domestically - "0" in India. Not
+   * part of the number itself, and never valid at the front of a real one. */
+  trunkPrefix?: string;
 }
 
 export const COUNTRIES: Country[] = [
-  { dialCode: "+91", name: "India", nationalDigits: 10 },
+  { dialCode: "+91", name: "India", nationalDigits: 10, trunkPrefix: "0" },
 ];
 
 export const DEFAULT_COUNTRY = COUNTRIES[0];
@@ -37,6 +40,35 @@ export interface MobileFieldProps {
   country?: Country;
   disabled?: boolean;
   autoFocus?: boolean;
+}
+
+/** Reduces anything a person might type or paste to the national digits.
+ *
+ * Peels prefixes in a loop rather than once, because they combine: "0" then
+ * "91" is a perfectly normal way to write a number down. Only peels while the
+ * value is still too long, so a legitimate ten-digit number starting with a
+ * prefix digit is never eaten.
+ *
+ * Extracted and exported so it can be tested directly. The version that lived
+ * inline handled a pasted "+91 98765 43210" but silently truncated the very
+ * common "09840816035" to "0984081603" - a different number, and one the user
+ * was then told was invalid without being told why.
+ */
+export function toNationalDigits(raw: string, country: Country = DEFAULT_COUNTRY): string {
+  let digits = (raw || "").replace(/\D/g, "");
+  const international = country.dialCode.replace("+", "");
+
+  for (let i = 0; i < 3; i++) {
+    if (digits.length <= country.nationalDigits) break;
+    if (digits.startsWith(international)) {
+      digits = digits.slice(international.length);
+    } else if (country.trunkPrefix && digits.startsWith(country.trunkPrefix)) {
+      digits = digits.slice(country.trunkPrefix.length);
+    } else {
+      break;
+    }
+  }
+  return digits.slice(0, country.nationalDigits);
 }
 
 /** The full E.164 number for a national-digits value. */
@@ -106,17 +138,9 @@ export function MobileField({
           autoFocus={autoFocus}
           onFocus={() => setFocused(true)}
           onBlur={() => setFocused(false)}
-          // Strip anything that is not a digit as it is typed, so a pasted
-          // "+91 98765 43210" becomes usable instead of being rejected. The
-          // leading country code is dropped because it is already shown.
-          onChange={(e) => {
-            let digits = e.target.value.replace(/\D/g, "");
-            const bare = country.dialCode.replace("+", "");
-            if (digits.length > country.nationalDigits && digits.startsWith(bare)) {
-              digits = digits.slice(bare.length);
-            }
-            onChange(digits.slice(0, country.nationalDigits));
-          }}
+          // Normalised as it is typed, so a pasted "+91 98765 43210" or a
+          // dictated "09840816035" becomes usable instead of being rejected.
+          onChange={(e) => onChange(toNationalDigits(e.target.value, country))}
           style={{
             flex: 1,
             minWidth: 0,
