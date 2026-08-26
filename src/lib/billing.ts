@@ -261,9 +261,47 @@ export async function confirmOrder(id: string, by: string): Promise<PaymentOrder
   const confirmed = mapOrder(res.rows[0]);
   if (confirmed.tenantId) {
     const until = await grantLicense(confirmed.tenantId, "full", new Date(confirmed.claimedAt!));
+    await giveNumberIfOwed(confirmed.tenantId);
     return recordLicensedUntil(confirmed, until);
   }
   return confirmed;
+}
+
+/** The other half of gating purchase on a confirmed payment.
+ *
+ * Signup hands out a pooled number to anyone who says they paid, but will not
+ * BUY one on a claim alone - see acquireNumber. That leaves a business with a
+ * confirmed payment and no number whenever the pool was empty, so this is where
+ * it finally gets one, at the moment the money is known to have arrived.
+ *
+ * Best-effort and non-fatal: confirming a payment must still license the tenant
+ * even if the carrier is having a bad day. It shouts, because a paid business
+ * with no phone line is the thing this whole path exists to prevent.
+ *
+ * Imported lazily so that provisionTenant's dependencies - the Anthropic SDK
+ * and the ingest path - do not get pulled into every route that touches
+ * billing.ts, which is most of them. */
+async function giveNumberIfOwed(tenantId: string): Promise<void> {
+  try {
+    const existing = await pool.query<{ voice_phone_number: string | null }>(
+      "SELECT voice_phone_number FROM tenants WHERE id = $1",
+      [tenantId]
+    );
+    if (existing.rows[0]?.voice_phone_number) return;
+
+    const { acquireNumber } = await import("@/lib/provisionTenant");
+    const e164 = await acquireNumber(tenantId, true);
+    if (e164) {
+      console.log(`[payment-confirm] ${tenantId} paid and confirmed - assigned ${e164}`);
+    } else {
+      console.error(
+        `[payment-confirm] ${tenantId} has a CONFIRMED payment but could not be given a number. ` +
+          `Assign one from /admin/numbers.`
+      );
+    }
+  } catch (err) {
+    console.error(`[payment-confirm] number acquisition failed for confirmed tenant ${tenantId}:`, err);
+  }
 }
 
 /** The credit did not arrive. Ends the provisional licence at once rather than

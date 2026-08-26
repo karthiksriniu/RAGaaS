@@ -227,9 +227,29 @@ async function procureNumber(tenantId: string): Promise<string | null> {
  * The pre-bought pool is tried FIRST even when live procurement is on. Numbers
  * already paid for should be used before spending again, and it keeps the two
  * demo numbers doing their job on staging. */
-export async function acquireNumber(tenantId: string): Promise<string | null> {
+export async function acquireNumber(
+  tenantId: string,
+  /** Whether this tenant has paid for a number we do not already own.
+   *
+   * The pool is always fair game - those numbers are bought and paid for, and
+   * handing one out costs nothing new. BUYING is different: a signup arrives on
+   * a payer's own word that they paid, which is not evidence that any money
+   * moved. Procuring on that would spend real money (setup plus a monthly fee)
+   * on a claim that an admin might reject three days later.
+   *
+   * So purchase waits for the credit to actually be seen. confirmOrder() comes
+   * back for the number once it is - see billing.ts. */
+  mayProcure = false
+): Promise<string | null> {
   const pooled = await claimPooledNumber(tenantId);
   if (pooled) return pooled;
+  if (!mayProcure) {
+    console.log(
+      `[number-procure] ${tenantId} has no pooled number and its payment is not confirmed yet - ` +
+        `not buying one. It gets a number when the payment is confirmed.`
+    );
+    return null;
+  }
   if (!liveProcurementEnabled()) return null;
 
   try {
@@ -364,7 +384,10 @@ export interface ProvisionResult {
 export async function provisionTenant(
   businessName: string,
   description: string,
-  websiteUrl?: string | null
+  websiteUrl?: string | null,
+  /** Passed to acquireNumber - see there for why buying waits for a confirmed
+   * payment while claiming from the pool does not. */
+  mayProcure = false
 ): Promise<ProvisionResult> {
   const website = normalizeWebsite(websiteUrl);
   const tenantId = await deriveTenantId(businessName);
@@ -401,7 +424,7 @@ export async function provisionTenant(
   // adds ~20-25s on top of this, which is still worth keeping off the
   // provisioning screen. See enhanceKbFromWebsite().
   const [numberResult, kbResult] = await Promise.allSettled([
-    acquireNumber(tenantId),
+    acquireNumber(tenantId, mayProcure),
     (async () => {
       if (!trimmed) return 0;
       const md = await generateStarterKb(businessName, trimmed, null);

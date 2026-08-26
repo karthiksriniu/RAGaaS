@@ -30,7 +30,7 @@ export default function SignupPage() {
   const [busy, setBusy] = useState(false);
   const [price, setPrice] = useState(FALLBACK_PRICE);
   const [payment, setPayment] = useState<PaymentInstructions | null>(null);
-  const [result, setResult] = useState<{ phoneNumber: string | null; tenantId: string } | null>(null);
+  const [result, setResult] = useState<{ phoneNumber: string | null; tenantId: string; licenseState: string } | null>(null);
 
   // Guards the auto-advance from the payment poller: a confirmation landing
   // while provisioning is already under way must not start a second signup.
@@ -135,7 +135,7 @@ export default function SignupPage() {
           website,
           orderId,
         });
-        setResult({ phoneNumber: d.phoneNumber ?? null, tenantId: d.tenantId });
+        setResult({ phoneNumber: d.phoneNumber ?? null, tenantId: d.tenantId, licenseState: d.licenseState });
         setStep("done");
       } catch (e) {
         setError(e instanceof Error ? e.message : String(e));
@@ -278,7 +278,14 @@ export default function SignupPage() {
               </Card>
             ) : (
               <Card variant="filled" padding={20}>
-                <p className="kw-body-medium">Your number is being assigned — we&apos;ll be in touch shortly.</p>
+                {/* Honest about WHY there is no number yet. A number is bought
+                    only once the payment is confirmed, so "being assigned"
+                    alone would leave someone refreshing for a day. */}
+                <p className="kw-body-medium">
+                  {result?.licenseState === "provisional"
+                    ? "Your number is assigned as soon as we confirm your payment with our bank — usually within a day or two. Everything else is ready now."
+                    : "Your number is being assigned — we'll be in touch shortly."}
+                </p>
               </Card>
             )}
             <div className="mt-6">
