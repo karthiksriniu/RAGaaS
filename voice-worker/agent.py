@@ -604,5 +604,20 @@ if __name__ == "__main__":
             # kills the job mid-call ("process is unresponsive" -> exit -10).
             # One spare is enough to keep answer latency low.
             num_idle_processes=1,
+            # The health-check listener. Nothing consumes it - this is a worker
+            # that dials OUT to LiveKit and serves no HTTP (see fly.toml) - but
+            # it still binds, and the bind is fatal when the port is taken:
+            #   OSError: [Errno 98] ... bind on address ('::', 8081) ... in use
+            #   worker failed -> draining worker -> id: "unregistered"
+            # which is a crash loop that never registers, so calls ring and
+            # nobody answers while the container reports itself healthy.
+            #
+            # That happens when two workers share a network namespace - the
+            # normal way being two containers in ONE Lightsail container
+            # service, e.g. staging and production deployed together. Prefer a
+            # service each; set WORKER_HTTP_PORT to give them different ports
+            # when you cannot. 0 picks a free port, which is safe here only
+            # because nothing checks this endpoint.
+            port=int(os.getenv("WORKER_HTTP_PORT", "8081")),
         )
     )
