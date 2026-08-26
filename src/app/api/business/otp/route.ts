@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { normalizeMobile, sendOtp, OtpUndeliverableError } from "@/lib/businessAuth";
-import { configuredChannel } from "@/lib/otpDelivery";
+import { configuredChannel, missingSettings } from "@/lib/otpDelivery";
 import { checkRateLimit } from "@/lib/rateLimit";
 
 export const runtime = "nodejs";
@@ -15,7 +15,12 @@ export const runtime = "nodejs";
  * Deliberately returns the channel NAME only. It says nothing about which
  * credentials are set, and carries no secret. */
 export async function GET() {
-  return NextResponse.json({ channel: configuredChannel() });
+  const channel = configuredChannel();
+  // Staging only: which settings each channel is still waiting on. Names, not
+  // values. Diagnosing "configured but still reports none" across five
+  // variables otherwise costs a redeploy per guess.
+  const onStaging = (process.env.TENANT_ROOT_DOMAIN || "").startsWith("staging.");
+  return NextResponse.json({ channel, ...(onStaging ? { missing: missingSettings() } : {}) });
 }
 
 /** Issues an OTP for signup or login. Same endpoint for both: the mobile is the
