@@ -117,9 +117,27 @@ export async function allowNumberOnInboundTrunk(e164: string): Promise<void> {
     // broken. Worth a loud line, because a trunk made by hand in the console is
     // the case that most often lacks one.
     const rules = await sip.listSipDispatchRule();
-    const dispatched = rules.some((r) => r.trunkIds.includes(plan.trunkId));
-    if (dispatched) {
-      console.log(`[livekit-sip] ${e164} is already on trunk ${plan.trunkId}, which has a dispatch rule - nothing to do`);
+    const forTrunk = rules.filter((r) => r.trunkIds.includes(plan.trunkId));
+    if (forTrunk.length > 0) {
+      // WHICH agent, not just whether a rule exists. agent_name has to match
+      // what the worker registers as, exactly (see voice-worker/agent.py) - a
+      // rule naming anything else summons nobody, and the caller hears ringing
+      // and then silence, which is indistinguishable from no rule at all.
+      const agents = forTrunk.flatMap((r) =>
+        (r.roomConfig?.agents ?? []).map((a) => a.agentName || "(unnamed)")
+      );
+      const expected = "mybizcare-voice";
+      if (agents.includes(expected)) {
+        console.log(
+          `[livekit-sip] ${e164} is already on trunk ${plan.trunkId}, dispatching "${expected}" - nothing to do`
+        );
+      } else {
+        console.error(
+          `[livekit-sip] ${e164} is on trunk ${plan.trunkId} and its dispatch rule summons ` +
+            `${agents.length ? agents.map((a) => `"${a}"`).join(", ") : "NO AGENT"} - but the worker ` +
+            `registers as "${expected}". Calls will ring and then sit in an empty room.`
+        );
+      }
     } else {
       console.error(
         `[livekit-sip] ${e164} is on trunk ${plan.trunkId} but NO DISPATCH RULE points at that trunk - ` +
