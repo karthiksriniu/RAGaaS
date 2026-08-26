@@ -129,6 +129,13 @@ create table if not exists otp_challenges (
   created_at timestamptz not null default now()
 );
 
+-- The receipt that this mobile actually completed the code step. See
+-- scripts/migrations/006-otp-verification-receipt.sql: proving verification by
+-- the ABSENCE of a row also let through a number that never requested a code.
+alter table otp_challenges add column if not exists verified_at timestamptz;
+create index if not exists otp_challenges_verified_idx
+  on otp_challenges (mobile, verified_at) where verified_at is not null;
+
 -- Numbers bought up front and handed out at signup. Signup claims a free row
 -- atomically, so it can never spend money unexpectedly and two simultaneous
 -- signups can never take the same number.

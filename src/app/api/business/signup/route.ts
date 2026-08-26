@@ -3,7 +3,9 @@ import { after } from "next/server";
 import { pool } from "@/lib/db";
 import {
   BUSINESS_SESSION_COOKIE,
+  consumeVerification,
   createBusinessSession,
+  hasVerifiedRecently,
   newAccountId,
   normalizeMobile,
 } from "@/lib/businessAuth";
@@ -47,10 +49,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Too many signup attempts. Try again later." }, { status: 429 });
   }
 
-  // Proof of verification: verifyOtp deletes the challenge on success, so a
-  // surviving row means this number never completed the code step.
-  const pending = await pool.query("SELECT 1 FROM otp_challenges WHERE mobile = $1", [normalized]);
-  if (pending.rows.length > 0) {
+  // Proof of verification, positively: a receipt from verifyOtp, still inside
+  // its window. This used to test that NO challenge row survived - which was
+  // equally true of a mobile that had never requested a code, so signup could
+  // be driven against someone else's number by skipping the OTP step.
+  if (!(await hasVerifiedRecently(normalized))) {
     return NextResponse.json({ error: "Verify your mobile number first" }, { status: 403 });
   }
 
@@ -125,6 +128,8 @@ export async function POST(req: NextRequest) {
     "INSERT INTO business_accounts (id, mobile, tenant_id) VALUES ($1, $2, $3)",
     [newAccountId(), normalized, provisioned.tenantId]
   );
+  // One verification, one account.
+  await consumeVerification(normalized);
 
   const res = NextResponse.json({
     ok: true,
