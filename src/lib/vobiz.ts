@@ -25,8 +25,30 @@ const VOBIZ_BASE = "https://api.vobiz.ai/api/v1";
 
 /** Name of the shared inbound trunk. Looked up by name so provisioning is
  * idempotent - re-running finds the existing trunk instead of creating a
- * second one that would silently split traffic. */
-const TRUNK_NAME = "mybizcare-livekit-inbound";
+ * second one that would silently split traffic.
+ *
+ * ENVIRONMENT-SUFFIXED, and it has to be. Staging and production share one
+ * Vobiz account, so with a single fixed name ensureLiveKitTrunk() would find
+ * staging's trunk when provisioning a production number and attach it - to
+ * STAGING's LiveKit SIP URI. Every call to a paying customer's new number
+ * would have been answered by the staging worker, reading from the staging
+ * knowledge base, with nothing anywhere reporting an error.
+ *
+ * Derived from the root domain so it cannot be forgotten when a new
+ * environment appears: whatever TENANT_ROOT_DOMAIN says, the trunk and its
+ * origination URI are named for it. */
+function environmentSuffix(): string {
+  const root = process.env.TENANT_ROOT_DOMAIN || "";
+  return root.startsWith("staging.") ? "staging" : "prod";
+}
+
+function trunkName(): string {
+  return `mybizcare-livekit-inbound-${environmentSuffix()}`;
+}
+
+function originationUriName(): string {
+  return `mybizcare-livekit-${environmentSuffix()}`;
+}
 
 export class VobizError extends Error {
   constructor(
@@ -120,7 +142,7 @@ async function ensureLiveKitTrunk(cfg: VobizConfig): Promise<string> {
     "GET",
     `/Account/${cfg.authId}/trunks`
   );
-  const found = (existing.data ?? []).find((t) => t.name === TRUNK_NAME);
+  const found = (existing.data ?? []).find((t) => t.name === trunkName());
   if (found) return (found.uuid || found.trunk_id)!;
 
   // `uri`, NOT the documented `sip_uri` - see the defect note at the top of
@@ -129,7 +151,7 @@ async function ensureLiveKitTrunk(cfg: VobizConfig): Promise<string> {
     cfg,
     "POST",
     `/Account/${cfg.authId}/origination-uris`,
-    { name: "mybizcare-livekit", uri: cfg.livekitSipUri, priority: 1 }
+    { name: originationUriName(), uri: cfg.livekitSipUri, priority: 1 }
   );
   const uriId = uri.id || uri.uuid;
 
@@ -138,7 +160,7 @@ async function ensureLiveKitTrunk(cfg: VobizConfig): Promise<string> {
     "POST",
     `/Account/${cfg.authId}/trunks`,
     {
-      name: TRUNK_NAME,
+      name: trunkName(),
       trunk_direction: "inbound",
       // "enabled", not "active" - the spec calls this out explicitly as a
       // common mistake.
