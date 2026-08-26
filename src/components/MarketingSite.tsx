@@ -5,6 +5,7 @@ import { Card } from "./kiowa/Card";
 
 const CONTACT_EMAIL = "karthik.sreeni@gmail.com";
 const MAILTO = `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent("MyBizCare - let's talk")}`;
+const SIGNUP = "/signup";
 
 function Eyebrow({ children, dark = false }: { children: ReactNode; dark?: boolean }) {
   return (
@@ -101,11 +102,20 @@ export function MarketingSite() {
             </a>
           ))}
         </nav>
-        <a href={MAILTO}>
-          <Button variant="filled" size="small">
-            Get in touch
-          </Button>
-        </a>
+        <div className="flex items-center gap-2">
+          {/* Straight to /app: an already-signed-in owner lands on their
+              dashboard, and anyone else is bounced to /login from there. */}
+          <a href="/app">
+            <Button variant="outlined" size="small">
+              Login
+            </Button>
+          </a>
+          <a href={SIGNUP}>
+            <Button variant="filled" size="small">
+              Sign up
+            </Button>
+          </a>
+        </div>
       </header>
 
       {/* Hero */}
@@ -125,9 +135,9 @@ export function MarketingSite() {
             already use.
           </p>
           <div className="mt-8 flex justify-center gap-3">
-            <a href={MAILTO}>
-              <Button variant="filled" size="large" icon="mail">
-                Talk to us
+            <a href={SIGNUP}>
+              <Button variant="filled" size="large" icon="arrow_forward">
+                Get started
               </Button>
             </a>
           </div>
@@ -369,9 +379,9 @@ export function MarketingSite() {
             See it answer real questions from your own knowledge — in your very first walkthrough.
           </p>
           <div className="mt-8 flex justify-center">
-            <a href={MAILTO}>
-              <Button variant="filled" size="large" icon="mail">
-                Email us: {CONTACT_EMAIL}
+            <a href={SIGNUP}>
+              <Button variant="filled" size="large" icon="arrow_forward">
+                Get started
               </Button>
             </a>
           </div>

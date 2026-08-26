@@ -16,17 +16,22 @@
     "@anthropic-ai/sdk": "^0.112.4",
     "@breezystack/lamejs": "^1.2.7",
     "dotenv": "^17.4.2",
+    "exceljs": "^4.4.0",
+    "livekit-server-sdk": "^2.18.0",
     "mammoth": "^1.12.0",
     "next": "^16.2.11",
     "pg": "^8.22.0",
+    "qrcode": "^1.5.4",
     "react": "19.2.4",
     "react-dom": "19.2.4",
-    "twilio": "^6.0.2"
+    "twilio": "^6.0.2",
+    "unpdf": "^1.8.1"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "@types/node": "^20",
     "@types/pg": "^8.20.0",
+    "@types/qrcode": "^1.5.6",
     "@types/react": "^19",
     "@types/react-dom": "^19",
     "dotenv-cli": "^11.0.0",

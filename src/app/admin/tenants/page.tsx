@@ -224,9 +224,14 @@ export default function AdminTenants() {
           </h1>
           <StatusPill label="Tenants" tone="neutral" />
         </div>
-        <Link href="/admin">
-          <Button type="button" variant="text" icon="description">Knowledge sources</Button>
-        </Link>
+        <div className="flex gap-2">
+          <Link href="/admin/billing">
+            <Button type="button" variant="text" icon="payments">Billing</Button>
+          </Link>
+          <Link href="/admin">
+            <Button type="button" variant="text" icon="description">Knowledge sources</Button>
+          </Link>
+        </div>
       </header>
 
       <div className="mx-auto max-w-2xl px-6 py-8">

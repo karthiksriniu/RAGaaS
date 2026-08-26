@@ -17,6 +17,10 @@ export interface TextFieldProps extends Omit<InputHTMLAttributes<HTMLInputElemen
   error?: boolean;
   disabled?: boolean;
   onChange?: (e: ChangeEvent<HTMLInputElement>) => void;
+  /** Fill the container instead of sizing to content. The default is
+   * inline-flex with a minWidth, which is right for inline edit controls but
+   * leaves a stacked form looking ragged next to a full-width Textarea. */
+  fullWidth?: boolean;
   style?: CSSProperties;
 }
 
@@ -33,6 +37,7 @@ export function TextField({
   type = "text",
   autoFocus = false,
   onChange,
+  fullWidth = false,
   style,
   ...rest
 }: TextFieldProps) {
@@ -64,7 +69,7 @@ export function TextField({
   const reserveLabelSpace = isOutlined && !!label;
 
   return (
-    <div style={{ display: "inline-flex", flexDirection: "column", gap: 4, fontFamily: "var(--font-ui)", minWidth: 220, ...style }}>
+    <div style={{ display: fullWidth ? "flex" : "inline-flex", width: fullWidth ? "100%" : undefined, flexDirection: "column", gap: 4, fontFamily: "var(--font-ui)", minWidth: fullWidth ? 0 : 220, ...style }}>
       {reserveLabelSpace && <div style={{ height: 14 }} />}
       <div
         style={{

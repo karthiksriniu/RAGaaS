@@ -1,4 +1,5 @@
 import { pool } from "@/lib/db";
+import { PROVISIONAL_DAYS } from "@/lib/upi";
 
 export interface Tenant {
   id: string;
@@ -19,6 +20,10 @@ export interface Tenant {
    * Not a secret, safe to return from the admin API unlike the Twilio
    * auth token above. */
   answerConfigMd: string | null;
+  /** E.164 number customers dial to reach this tenant's voice agent. */
+  voicePhoneNumber: string | null;
+  /** Named voice preset id; null uses the default. See voicePresets.ts. */
+  voicePreset: string | null;
   licenseExpiresAt: string | null;
   archivedAt: string | null;
   createdAt: string;
@@ -60,6 +65,8 @@ interface TenantRow {
   twilio_account_sid: string | null;
   twilio_auth_token: string | null;
   answer_config_md: string | null;
+  voice_phone_number: string | null;
+  voice_preset: string | null;
   license_expires_at: string | null;
   archived_at: string | null;
   created_at: string;
@@ -79,6 +86,8 @@ function mapRow(row: TenantRow): Tenant {
     twilioAccountSid: row.twilio_account_sid,
     hasCustomTwilioAuthToken: !!row.twilio_auth_token,
     answerConfigMd: row.answer_config_md,
+    voicePhoneNumber: row.voice_phone_number,
+    voicePreset: row.voice_preset,
     licenseExpiresAt: row.license_expires_at,
     archivedAt: row.archived_at,
     createdAt: row.created_at,
@@ -222,6 +231,57 @@ export async function updateTenantLicense(
   return mapRow(result.rows[0]);
 }
 
+export type LicenseKind = "provisional" | "full";
+
+/** Extends a tenant's licence off the back of a payment.
+ *
+ * `base` is the moment the payment was made (the order's claim time), NOT the
+ * moment confirmation happened. Confirmation can take up to three days, and
+ * measuring from it would hand out 30-33 days depending on how quickly someone
+ * got to the admin queue. Anchored to the payment, every tenant's month is the
+ * same length and the provisional days are absorbed rather than added on top.
+ *
+ * The arithmetic is Postgres's `interval '1 month'`, which is calendar-correct
+ * where JavaScript's setMonth is not: 31 January + 1 month is 28 February here,
+ * and 3 March in JS.
+ *
+ * greatest() makes this monotonic - a grant can only ever push the expiry
+ * further out. That is what keeps the two-step claim-then-confirm path honest:
+ * the 3-day provisional grant lands first, the full month replaces it, and a
+ * replayed or out-of-order confirmation cannot shorten a live licence. */
+export async function grantLicense(
+  tenantId: string,
+  kind: LicenseKind,
+  base: Date
+): Promise<string> {
+  if (tenantId === PROTECTED_TENANT_ID) throw new DefaultTenantProtectedError();
+  const interval = kind === "full" ? "1 month" : `${PROVISIONAL_DAYS} days`;
+  const result = await pool.query<{ license_expires_at: string }>(
+    `UPDATE tenants
+        SET license_expires_at = greatest($2::timestamptz + $3::interval, license_expires_at)
+      WHERE id = $1 AND archived_at IS NULL
+      RETURNING license_expires_at`,
+    [tenantId, base.toISOString(), interval]
+  );
+  if (result.rows.length === 0) throw new TenantNotFoundError(tenantId);
+  return result.rows[0].license_expires_at;
+}
+
+/** Ends a tenant's licence now. Used when a payment is confirmed NOT to have
+ * arrived, so a rejected claim stops the agent immediately instead of running
+ * out the rest of its provisional days. */
+export async function expireLicenseNow(tenantId: string): Promise<void> {
+  if (tenantId === PROTECTED_TENANT_ID) throw new DefaultTenantProtectedError();
+  await pool.query(
+    "UPDATE tenants SET license_expires_at = now() WHERE id = $1 AND archived_at IS NULL",
+    [tenantId]
+  );
+}
+
+export function isLicenseExpired(licenseExpiresAt: string | null): boolean {
+  return !!licenseExpiresAt && new Date(licenseExpiresAt) <= new Date();
+}
+
 export async function updateTenantWhatsappNumber(
   id: string,
   twilioWhatsappNumber: string | null
@@ -241,6 +301,33 @@ export async function updateTenantAnswerConfig(
   const result = await pool.query<TenantRow>(
     `UPDATE tenants SET answer_config_md = $2 WHERE id = $1 AND archived_at IS NULL RETURNING *`,
     [id, answerConfigMd]
+  );
+  if (result.rows.length === 0) throw new TenantNotFoundError(id);
+  return mapRow(result.rows[0]);
+}
+
+/** Resolves the tenant whose voice agent owns a dialed number. This is what
+ * makes one voice worker serve every tenant - it is the same lookup pattern as
+ * getTenantByWhatsappNumber, just for the voice channel and without a wire
+ * prefix. Archived tenants are excluded so a decommissioned number stops
+ * answering rather than serving a dead tenant's knowledge base. */
+export async function getTenantByVoiceNumber(voicePhoneNumber: string): Promise<Tenant | null> {
+  if (!voicePhoneNumber) return null;
+  const result = await pool.query<TenantRow>(
+    "SELECT * FROM tenants WHERE voice_phone_number = $1 AND archived_at IS NULL",
+    [voicePhoneNumber]
+  );
+  return result.rows.length > 0 ? mapRow(result.rows[0]) : null;
+}
+
+/** Null clears the number, freeing it for another tenant. */
+export async function updateTenantVoiceNumber(
+  id: string,
+  voicePhoneNumber: string | null
+): Promise<Tenant> {
+  const result = await pool.query<TenantRow>(
+    `UPDATE tenants SET voice_phone_number = $2 WHERE id = $1 AND archived_at IS NULL RETURNING *`,
+    [id, voicePhoneNumber]
   );
   if (result.rows.length === 0) throw new TenantNotFoundError(id);
   return mapRow(result.rows[0]);

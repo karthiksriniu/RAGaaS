@@ -24,6 +24,7 @@ interface TenantOption {
   name: string;
 }
 
+
 export default function AdminHome() {
   const [tenants, setTenants] = useState<TenantOption[]>([]);
   const [selectedTenantId, setSelectedTenantId] = useState("");
@@ -64,6 +65,7 @@ export default function AdminHome() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+
   useEffect(() => {
     refreshSources(selectedTenantId);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -80,6 +82,9 @@ export default function AdminHome() {
       const res = await fetch("/api/admin/ingest", { method: "POST", body: formData });
       const data = await res.json();
       if (!res.ok) throw new Error(data.error || "Upload failed");
+      // The derived artifacts are a pure function of the tenant's chunks, so
+      // any ingest invalidates them - regenerate immediately rather than
+      // leaving the admin looking at a stale document.
       await refreshSources(selectedTenantId);
     } catch (err) {
       setUploadError(err instanceof Error ? err.message : String(err));
@@ -97,6 +102,9 @@ export default function AdminHome() {
     });
     await refreshSources(selectedTenantId);
   }
+
+
+
 
   async function handleLogout() {
     await fetch("/api/admin/logout", { method: "POST" });
@@ -121,6 +129,12 @@ export default function AdminHome() {
         <div className="flex items-center gap-2">
           <Link href="/admin/tenants">
             <Button type="button" variant="text" icon="group">Manage tenants</Button>
+          </Link>
+          <Link href="/admin/numbers">
+            <Button type="button" variant="text" icon="dialpad">Phone numbers</Button>
+          </Link>
+          <Link href="/admin/billing">
+            <Button type="button" variant="text" icon="payments">Billing</Button>
           </Link>
           <Button type="button" variant="outlined" icon="logout" onClick={handleLogout}>Sign out</Button>
         </div>
@@ -204,6 +218,7 @@ export default function AdminHome() {
             </Card>
           )}
         </div>
+
       </div>
     </div>
   );

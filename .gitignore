@@ -32,6 +32,10 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+# ...but .env.example files are templates with no real values, and are
+# the only documentation of which vars a service needs.
+!.env.example
+!**/.env.example
 
 # vercel
 .vercel

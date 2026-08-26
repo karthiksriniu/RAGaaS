@@ -1,20 +1,11 @@
 import Anthropic from "@anthropic-ai/sdk";
-import { embedTexts } from "@/lib/embeddings";
-import { withTenant } from "@/lib/db";
 import { classifyCriticality } from "@/lib/classify";
 import { classifySource, getAnswerMode, SourceClass, Criticality } from "@/lib/answerMode";
 import { getTenantAnswerConfig } from "@/lib/tenants";
 import { buildSystemPrompt } from "@/lib/systemPrompt";
+import { retrieveChunks, buildContextBlock } from "@/lib/retrieveChunks";
 
 const anthropic = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-
-interface ChunkRow {
-  text: string;
-  source_type: string;
-  source_uri: string;
-  page_or_row: string | null;
-  similarity: number;
-}
 
 export interface Citation {
   index: number;
@@ -68,25 +59,15 @@ const COMPOSE_ANSWER_TOOL: Anthropic.Tool = {
 export async function answerQuestion(question: string, tenantId: string): Promise<AnswerResult> {
   if (!tenantId) throw new Error("answerQuestion: tenantId is required");
 
-  const [[queryEmbedding], criticality, tenantConfigMd] = await Promise.all([
-    embedTexts([question], "query"),
+  // retrieveChunks() now covers both the embedding call and the similarity
+  // query, so the whole retrieval overlaps with criticality classification
+  // rather than the query waiting on it, as it did when only the embedding
+  // was inside this Promise.all. Same output, one less round trip in series.
+  const [chunks, criticality, tenantConfigMd] = await Promise.all([
+    retrieveChunks(question, tenantId),
     classifyCriticality(question),
     getTenantAnswerConfig(tenantId),
   ]);
-  const embeddingLiteral = `[${queryEmbedding.join(",")}]`;
-
-  const result = await withTenant(tenantId, (client) =>
-    client.query<ChunkRow>(
-      `SELECT text, source_type, source_uri, page_or_row, 1 - (embedding <=> $1) as similarity
-       FROM chunks
-       WHERE tenant_id = $2
-       ORDER BY embedding <=> $1
-       LIMIT 6`,
-      [embeddingLiteral, tenantId]
-    )
-  );
-
-  const chunks = result.rows;
 
   if (chunks.length === 0) {
     const msg = "There's no knowledge base content yet to answer this from. Upload a source document first.";
@@ -109,12 +90,7 @@ export async function answerQuestion(question: string, tenantId: string): Promis
   const source = classifySource(chunks[0].similarity);
   const mode = getAnswerMode(source, criticality.label);
 
-  const contextBlock = chunks
-    .map(
-      (c, i) =>
-        `[${i + 1}] (Source: ${c.source_uri}${c.page_or_row ? ` — ${c.page_or_row}` : ""})\n${c.text}`
-    )
-    .join("\n\n---\n\n");
+  const contextBlock = buildContextBlock(chunks);
 
   const systemPrompt = buildSystemPrompt(mode, contextBlock, tenantConfigMd);
 

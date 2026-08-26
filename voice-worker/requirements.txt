@@ -1,0 +1,7 @@
+# LiveKit agents + the Sarvam plugin (STT/LLM/TTS) and silero VAD.
+# Pinned to a minor range: the beta workflows namespace used for warm
+# transfer (livekit.agents.beta.workflows) is explicitly beta and has moved
+# between releases, so an unpinned install can break the transfer path.
+livekit-agents[sarvam,silero]~=1.6
+python-dotenv~=1.0
+aiohttp~=3.9

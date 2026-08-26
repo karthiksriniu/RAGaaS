@@ -1,0 +1,259 @@
+// Vobiz telephony provisioning — buys a phone number and points it at our
+// LiveKit SIP endpoint, so onboarding a business needs no human in any
+// dashboard. This is the piece that makes self-service signup possible; it is
+// the reason the LiveKit path was chosen over Sarvam-managed, where agent
+// authoring and KB upload are both dashboard-only.
+//
+// Built against https://vobiz.ai/openapi.json (78 paths, base https://api.vobiz.ai).
+// Auth is two headers, X-Auth-ID and X-Auth-Token, on every request.
+//
+// TRUNK MODEL: the inbound trunk is PLATFORM-level, created once and shared by
+// every tenant. Only the phone number is per-tenant. A trunk per tenant would
+// multiply Vobiz objects for no benefit - routing to the right tenant happens
+// in our worker, from the dialed number, not in the carrier.
+//
+// KNOWN VOBIZ DEFECTS, both confirmed against a live trial account:
+//  * /origination-uris documents the field as `sip_uri`, but the service reads
+//    `uri`. Posting `sip_uri` returns 201 and silently persists uri:"", so the
+//    trunk has no routing target and Vobiz refuses every inbound call with
+//    hangup_disposition=send_refuse. Send `uri`. Confirmed by posting both.
+//  * /numbers/{e164}/assign returns 400 "access denied" on a trial account,
+//    so numbers cannot be bound to a trunk until the account is upgraded.
+//    provisionNumber() will fail at that step until then.
+
+import { normalizeMobile } from "@/lib/mobile";
+
+const VOBIZ_BASE = "https://api.vobiz.ai/api/v1";
+
+/** Name of the shared inbound trunk. Looked up by name so provisioning is
+ * idempotent - re-running finds the existing trunk instead of creating a
+ * second one that would silently split traffic.
+ *
+ * ENVIRONMENT-SUFFIXED, and it has to be. Staging and production share one
+ * Vobiz account, so with a single fixed name ensureLiveKitTrunk() would find
+ * staging's trunk when provisioning a production number and attach it - to
+ * STAGING's LiveKit SIP URI. Every call to a paying customer's new number
+ * would have been answered by the staging worker, reading from the staging
+ * knowledge base, with nothing anywhere reporting an error.
+ *
+ * Derived from the root domain so it cannot be forgotten when a new
+ * environment appears: whatever TENANT_ROOT_DOMAIN says, the trunk and its
+ * origination URI are named for it. */
+function environmentSuffix(): string {
+  const root = process.env.TENANT_ROOT_DOMAIN || "";
+  return root.startsWith("staging.") ? "staging" : "prod";
+}
+
+function trunkName(): string {
+  return `mybizcare-livekit-inbound-${environmentSuffix()}`;
+}
+
+function originationUriName(): string {
+  return `mybizcare-livekit-${environmentSuffix()}`;
+}
+
+export class VobizError extends Error {
+  constructor(
+    message: string,
+    public readonly status: number,
+    public readonly body: string
+  ) {
+    super(message);
+    this.name = "VobizError";
+  }
+}
+
+export class VobizNotConfiguredError extends Error {
+  constructor() {
+    super("Vobiz is not configured (VOBIZ_AUTH_ID / VOBIZ_AUTH_TOKEN / LIVEKIT_SIP_URI)");
+    this.name = "VobizNotConfiguredError";
+  }
+}
+
+/** Just enough to talk to Vobiz at all. */
+interface VobizCredentials {
+  authId: string;
+  authToken: string;
+}
+
+/** Credentials PLUS where inbound calls should be handed over. Only the trunk
+ * and number-provisioning paths need this. */
+interface VobizConfig extends VobizCredentials {
+  livekitSipUri: string;
+}
+
+function credentials(): VobizCredentials {
+  const authId = process.env.VOBIZ_AUTH_ID;
+  const authToken = process.env.VOBIZ_AUTH_TOKEN;
+  if (!authId || !authToken) throw new VobizNotConfiguredError();
+  return { authId, authToken };
+}
+
+/** Separate from credentials() on purpose. Requiring the inbound SIP URI for
+ * every Vobiz call meant placing an OUTBOUND verification call - which has
+ * nothing to do with where inbound calls are handed over - failed on any
+ * deployment that had never provisioned a number. The person signing up was
+ * told to check their own number; the actual cause was an unset variable they
+ * had no way of knowing about, and no LiveKit involvement at all. */
+function config(): VobizConfig {
+  const creds = credentials();
+  // The SIP URI LiveKit gives you for the inbound trunk, e.g.
+  // sip:xxxx.sip.livekit.cloud - this is where Vobiz hands calls over.
+  const livekitSipUri = process.env.LIVEKIT_SIP_URI;
+  if (!livekitSipUri) throw new VobizNotConfiguredError();
+  return { ...creds, livekitSipUri };
+}
+
+async function vobiz<T>(
+  cfg: VobizCredentials,
+  method: "GET" | "POST" | "DELETE",
+  path: string,
+  body?: unknown
+): Promise<T> {
+  const res = await fetch(`${VOBIZ_BASE}${path}`, {
+    method,
+    headers: {
+      "X-Auth-ID": cfg.authId,
+      "X-Auth-Token": cfg.authToken,
+      ...(body ? { "Content-Type": "application/json" } : {}),
+    },
+    ...(body ? { body: JSON.stringify(body) } : {}),
+  });
+
+  const text = await res.text();
+  if (!res.ok) {
+    throw new VobizError(`Vobiz ${method} ${path} failed (${res.status})`, res.status, text);
+  }
+  return (text ? JSON.parse(text) : {}) as T;
+}
+
+export interface InventoryNumber {
+  e164: string;
+  country?: string;
+  monthly_rate?: number;
+  currency?: string;
+}
+
+/** Numbers available to buy. `search` is a substring match on the E.164, so a
+ * business can be offered a number matching its city prefix. */
+export async function listInventoryNumbers(
+  country = "IN",
+  search?: string,
+  perPage = 20
+): Promise<InventoryNumber[]> {
+  const cfg = credentials();
+  const params = new URLSearchParams({ country, per_page: String(perPage) });
+  if (search) params.set("search", search);
+  const data = await vobiz<{ data?: InventoryNumber[]; numbers?: InventoryNumber[] }>(
+    cfg,
+    "GET",
+    `/Account/${cfg.authId}/inventory/numbers?${params}`
+  );
+  // The spec's list responses aren't consistently keyed, so accept either
+  // shape rather than silently returning nothing on a schema change.
+  return data.data ?? data.numbers ?? [];
+}
+
+/** Creates the shared inbound trunk pointing at LiveKit, or returns the
+ * existing one. Idempotent by trunk NAME - safe to call on every signup. */
+async function ensureLiveKitTrunk(cfg: VobizConfig): Promise<string> {
+  const existing = await vobiz<{ data?: { uuid?: string; trunk_id?: string; name?: string }[] }>(
+    cfg,
+    "GET",
+    `/Account/${cfg.authId}/trunks`
+  );
+  const found = (existing.data ?? []).find((t) => t.name === trunkName());
+  if (found) return (found.uuid || found.trunk_id)!;
+
+  // `uri`, NOT the documented `sip_uri` - see the defect note at the top of
+  // this file. Getting this wrong fails silently and refuses every call.
+  const uri = await vobiz<{ id?: string; uuid?: string }>(
+    cfg,
+    "POST",
+    `/Account/${cfg.authId}/origination-uris`,
+    { name: originationUriName(), uri: cfg.livekitSipUri, priority: 1 }
+  );
+  const uriId = uri.id || uri.uuid;
+
+  const trunk = await vobiz<{ uuid?: string; trunk_id?: string }>(
+    cfg,
+    "POST",
+    `/Account/${cfg.authId}/trunks`,
+    {
+      name: trunkName(),
+      trunk_direction: "inbound",
+      // "enabled", not "active" - the spec calls this out explicitly as a
+      // common mistake.
+      trunk_status: "enabled",
+      primary_uri_uuid: uriId,
+      // Belt and braces: inbound_destination also stores correctly, but
+      // primary_uri_uuid is what Vobiz actually routes on.
+      inbound_destination: cfg.livekitSipUri,
+      description: "Inbound calls handed to the MyBizCare LiveKit voice worker",
+    }
+  );
+  return (trunk.uuid || trunk.trunk_id)!;
+}
+
+export interface ProvisionedNumber {
+  e164: string;
+  trunkId: string;
+}
+
+/** Buys `e164` and attaches it to the shared LiveKit trunk.
+ *
+ * Ordering matters: the trunk is ensured BEFORE the number is purchased, so a
+ * misconfigured trunk fails without having spent money. Purchase is the only
+ * irreversible step here. */
+export async function provisionNumber(e164: string): Promise<ProvisionedNumber> {
+  const cfg = config();
+  const trunkId = await ensureLiveKitTrunk(cfg);
+
+  await vobiz(cfg, "POST", `/Account/${cfg.authId}/numbers/purchase-from-inventory`, { e164 });
+  await vobiz(cfg, "POST", `/Account/${cfg.authId}/numbers/${encodeURIComponent(e164)}/assign`, {
+    trunk_group_id: trunkId,
+  });
+
+  return { e164, trunkId };
+}
+
+/** Numbers already owned on the account - used to reconcile what Vobiz thinks
+ * we own against what the tenants table says, so a purchase that succeeded
+ * while the follow-up DB write failed can be spotted rather than orphaned. */
+export async function listOwnedNumbers(): Promise<{ e164: string }[]> {
+  const cfg = credentials();
+  const data = await vobiz<{ data?: { e164: string }[]; numbers?: { e164: string }[] }>(
+    cfg,
+    "GET",
+    `/Account/${cfg.authId}/numbers`
+  );
+  return data.data ?? data.numbers ?? [];
+}
+
+/** Places an outbound call that reads a verification code aloud.
+ *
+ * `answer_url` is fetched by Vobiz the moment the callee picks up, and whatever
+ * XML it returns is what they hear - so the code itself never travels in this
+ * request. See otpVoiceToken.ts for why it does not travel in the URL either.
+ *
+ * Returns the call UUID, which is what a CDR lookup would be keyed on if we
+ * ever need to prove whether a call was actually delivered. */
+export async function placeOtpCall(to: string, answerUrl: string): Promise<string> {
+  const cfg = credentials();
+  // Normalised, not passed through. This value is typed by hand into a Vercel
+  // field, so it arrives as "+91 80715 80725", "08071580725" or "918071580725"
+  // as often as not - and Vobiz rejects those with an error that surfaces to
+  // the person signing up as "check the number", pointing at the wrong number
+  // entirely.
+  const raw = process.env.OTP_CALLER_NUMBER;
+  const from = raw ? normalizeMobile(raw) : null;
+  if (!from) throw new VobizNotConfiguredError();
+
+  const res = await vobiz<{ request_uuid?: string; call_uuid?: string }>(
+    cfg,
+    "POST",
+    `/Account/${cfg.authId}/Call/`,
+    { from, to, answer_url: answerUrl, answer_method: "GET" }
+  );
+  return res.call_uuid || res.request_uuid || "";
+}

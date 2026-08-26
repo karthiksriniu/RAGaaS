@@ -89,3 +89,168 @@ create table if not exists rate_limit_events (
 
 create index if not exists rate_limit_events_bucket_idx
   on rate_limit_events (bucket_key, created_at);
+
+
+-- The phone number a tenant's customers dial to reach its voice agent, in
+-- E.164 (e.g. +918071582575). Distinct from twilio_whatsapp_number, which is
+-- stored with Twilio's "whatsapp:" wire prefix and belongs to a different
+-- channel. Unique so one number can never resolve to two tenants; nullable
+-- because a tenant may exist before a number is provisioned for it.
+alter table tenants add column if not exists voice_phone_number text unique;
+
+-- The derived-KB export was removed when the Sarvam-managed path was dropped
+-- in favour of LiveKit; retrieval is now live via /api/voice/retrieve, so
+-- there is nothing to export or track the upload of. Dropped rather than left
+-- orphaned, so the schema matches the code.
+alter table tenants drop column if exists derived_kb_uploaded_at;
+alter table tenants drop column if exists derived_kb_uploaded_hash;
+
+-- ── Self-service signup ───────────────────────────────────────────────────
+-- A business owner's login. Identity is the mobile number (OTP), so there is
+-- no password column at all. One account owns exactly one tenant in this
+-- phase; the FK is on the account, not the tenant, so a future "one owner,
+-- several businesses" needs no migration of existing rows.
+create table if not exists business_accounts (
+  id text primary key,
+  mobile text not null unique,
+  tenant_id text not null references tenants(id),
+  created_at timestamptz not null default now()
+);
+create index if not exists business_accounts_tenant_idx on business_accounts (tenant_id);
+
+-- Short-lived OTP challenges. Rows are deleted on successful verification and
+-- swept on issue, so this never accumulates. attempts caps brute force
+-- against a 6-digit code.
+create table if not exists otp_challenges (
+  mobile text primary key,
+  code_hash text not null,
+  attempts int not null default 0,
+  expires_at timestamptz not null,
+  created_at timestamptz not null default now()
+);
+
+-- Numbers bought up front and handed out at signup. Signup claims a free row
+-- atomically, so it can never spend money unexpectedly and two simultaneous
+-- signups can never take the same number.
+create table if not exists phone_number_pool (
+  e164 text primary key,
+  tenant_id text references tenants(id),
+  claimed_at timestamptz,
+  created_at timestamptz not null default now()
+);
+create index if not exists phone_number_pool_free_idx on phone_number_pool (tenant_id) where tenant_id is null;
+
+-- What the business told us it does, at signup. Seeds the agent's prompt and
+-- the generated starter knowledge base.
+alter table tenants add column if not exists business_description text;
+
+-- The app connects as the non-owner app_runtime role (SUPABASE_DB_URL_APP), so
+-- every new table needs explicit grants or the app gets a permission error that
+-- surfaces as a 500. The role's PASSWORD is deliberately not in this file;
+-- grants are not secret and belong here so a fresh environment is reproducible.
+--
+-- None of these three are RLS-scoped, for the same reason `tenants` isn't: they
+-- are registries and request bookkeeping, not tenant content. business_accounts
+-- is read before any session exists (to find which tenant a mobile owns), and
+-- phone_number_pool is platform inventory.
+do $$
+begin
+  if exists (select 1 from pg_roles where rolname = 'app_runtime') then
+    grant select, insert, update, delete on business_accounts to app_runtime;
+    grant select, insert, update, delete on otp_challenges    to app_runtime;
+    grant select, insert, update, delete on phone_number_pool to app_runtime;
+  end if;
+end $$;
+
+-- Which named voice preset this tenant's agent speaks with (see
+-- src/lib/voicePresets.ts). Stored as the preset id rather than the raw
+-- speaker/pace/temperature so the tuned pairings can be adjusted centrally
+-- without migrating every tenant's numbers. Null means the default preset.
+alter table tenants add column if not exists voice_preset text;
+
+-- Optional business website, captured at signup. Used to generate a far richer
+-- starter knowledge base than a one-line description can support.
+alter table tenants add column if not exists website_url text;
+
+-- Tracks the website-informed KB enhancement, which runs AFTER the signup
+-- response so the business isn't held on the provisioning screen for minutes.
+--   pending  - queued, running now in the background
+--   done     - website read and ingested
+--   failed   - see kb_enhancement_error; the business can retry
+--   null     - nothing to do (no website given)
+-- Needed because a background failure is otherwise invisible: without a status
+-- the business simply never receives the better KB and never learns why.
+alter table tenants add column if not exists kb_enhancement_status text;
+alter table tenants add column if not exists kb_enhancement_error text;
+
+-- The uploaded file itself, kept so a business can download back what it gave
+-- us. Ingestion previously read the bytes, chunked them and discarded them, so
+-- "download my document" had nothing to serve.
+--
+-- Stored as bytea rather than object storage deliberately: knowledge-base
+-- documents are small (policies, price lists, FAQs) and this needs no new
+-- service, bucket, credential or SDK. Revisit if tenants start uploading tens
+-- of megabytes - at that point Supabase Storage is the right home and this
+-- table becomes a pointer.
+create table if not exists kb_files (
+  tenant_id text not null references tenants(id),
+  source_uri text not null,
+  mime_type text not null,
+  size_bytes integer not null,
+  content bytea not null,
+  uploaded_at timestamptz not null default now(),
+  primary key (tenant_id, source_uri)
+);
+
+do $$
+begin
+  if exists (select 1 from pg_roles where rolname = 'app_runtime') then
+    grant select, insert, update, delete on kb_files to app_runtime;
+  end if;
+end $$;
+
+-- ── Billing: ₹999 UPI payments ────────────────────────────────────────────
+-- Mirrors scripts/migrations/005-upi-payments.sql, which is what an existing
+-- environment runs; this block is what a fresh one gets. See that file for the
+-- reasoning behind each column.
+create table if not exists platform_settings (
+  key text primary key,
+  value text not null,
+  updated_at timestamptz not null default now()
+);
+
+insert into platform_settings (key, value) values
+  ('upi_vpa', 'karthik.sreeni@cub'),
+  ('upi_payee_name', 'MyBizCare'),
+  ('plan_price_inr', '999')
+on conflict (key) do nothing;
+
+create table if not exists payment_orders (
+  id text primary key,
+  mobile text not null,
+  tenant_id text references tenants(id),
+  purpose text not null check (purpose in ('signup', 'renewal')),
+  amount_paise integer not null,
+  vpa text not null,
+  payee_name text not null,
+  status text not null check (status in ('pending', 'claimed', 'confirmed', 'rejected', 'expired')),
+  utr text,
+  claimed_at timestamptz,
+  confirmed_at timestamptz,
+  confirmed_by text,
+  licensed_until timestamptz,
+  qr_expires_at timestamptz not null,
+  created_at timestamptz not null default now()
+);
+
+create index if not exists payment_orders_mobile_idx on payment_orders (mobile, created_at desc);
+create index if not exists payment_orders_open_idx on payment_orders (status)
+  where status in ('pending', 'claimed');
+
+do $$
+begin
+  if exists (select 1 from pg_roles where rolname = 'app_runtime') then
+    grant select, insert, update, delete on platform_settings to app_runtime;
+    grant select, insert, update, delete on payment_orders    to app_runtime;
+  end if;
+end $$;
