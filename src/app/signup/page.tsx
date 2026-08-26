@@ -152,9 +152,11 @@ export default function SignupPage() {
           <>
             <h1 className="kw-headline-small mb-1">Verify your number</h1>
             <p className="kw-body-medium mb-6" style={{ color: "var(--color-on-surface-variant)" }}>
-              {channel === "whatsapp"
-                ? `We sent a 6-digit code to ${mobile} on WhatsApp.`
-                : `We sent a 6-digit code to ${mobile}.`}
+              {channel === "vobiz-voice"
+                ? `We're calling ${mobile} now — we'll read out a 6-digit code.`
+                : channel === "whatsapp"
+                  ? `We sent a 6-digit code to ${mobile} on WhatsApp.`
+                  : `We sent a 6-digit code to ${mobile}.`}
             </p>
             {devCode && (
               <p className="kw-body-small mb-4 rounded-lg p-3" style={{ background: "var(--color-tertiary-container)", color: "var(--color-on-tertiary-container)" }}>

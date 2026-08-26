@@ -6,6 +6,7 @@ import {
   configuredChannel,
   startWhatsAppVerification,
   checkWhatsAppVerification,
+  startVoiceVerification,
 } from "@/lib/otpDelivery";
 
 // Auth for business owners. Identity is a mobile number verified by OTP - there
@@ -97,12 +98,16 @@ export async function sendOtp(mobile: string): Promise<SentOtp> {
   const reveal = mayRevealCode();
   if (channel === "none" && !reveal) throw new OtpUndeliverableError();
 
-  // Delivery FIRST for WhatsApp. If Twilio rejects the number or the sender is
-  // misconfigured, no challenge row is written - so a retry is clean, and the
-  // owner is never left holding a live challenge for an unsent code.
-  if (channel === "whatsapp") await startWhatsAppVerification(mobile);
-
+  // For WhatsApp, Twilio owns the code. For voice and for the on-screen
+  // fallback we generate it ourselves, which is what keeps verification on the
+  // local path with its expiry and attempt cap.
   const code = channel === "whatsapp" ? null : generateCode();
+
+  // Delivery FIRST. If the carrier rejects the number or the sender is
+  // misconfigured, no challenge row is written - so a retry is clean, and the
+  // owner is never left holding a live challenge for a code that was not sent.
+  if (channel === "whatsapp") await startWhatsAppVerification(mobile);
+  if (channel === "vobiz-voice") await startVoiceVerification(mobile, code!);
   const expiresAt = new Date(Date.now() + OTP_TTL_MS);
 
   await pool.query(
@@ -118,7 +123,10 @@ export async function sendOtp(mobile: string): Promise<SentOtp> {
 
   // Never log the code itself once it is a real secret being really delivered.
   console.log(`[otp] issued for ${mobile} via ${channel}`);
-  return reveal && code ? { devCode: code } : {};
+  // Revealed ONLY when nothing delivered it. On a staging deployment that has
+  // a real channel configured, the code was really sent, so showing it on
+  // screen as well would be a needless second copy of a live secret.
+  return reveal && channel === "none" && code ? { devCode: code } : {};
 }
 
 export type OtpResult = "ok" | "invalid" | "expired" | "too_many_attempts" | "not_found";

@@ -8,18 +8,20 @@ import { configuredChannel, generateCode } from "../otpDelivery";
 // hint that was the only reason a fixed code had been safe.
 
 const VARS = ["TWILIO_VERIFY_SERVICE_SID", "TWILIO_ACCOUNT_SID", "TWILIO_AUTH_TOKEN"] as const;
+const VOICE_VARS = ["VOBIZ_AUTH_ID", "VOBIZ_AUTH_TOKEN", "OTP_CALLER_NUMBER", "APP_BASE_URL"] as const;
+const ALL = [...VARS, ...VOICE_VARS] as const;
 
 describe("configuredChannel", () => {
   const saved: Record<string, string | undefined> = {};
 
   beforeEach(() => {
-    for (const v of VARS) {
+    for (const v of ALL) {
       saved[v] = process.env[v];
       delete process.env[v];
     }
   });
   afterEach(() => {
-    for (const v of VARS) {
+    for (const v of ALL) {
       if (saved[v] === undefined) delete process.env[v];
       else process.env[v] = saved[v];
     }
@@ -37,6 +39,27 @@ describe("configuredChannel", () => {
   // Partial configuration is the dangerous state: it looks set up. Claiming
   // whatsapp here would let production issue codes that are never sent, with
   // the owner staring at a code screen for a message that is not coming.
+  it("reports vobiz-voice when Vobiz is fully configured", () => {
+    for (const v of VOICE_VARS) process.env[v] = "x";
+    expect(configuredChannel()).toBe("vobiz-voice");
+  });
+
+  // India-first: Vobiz already carries the calls and the numbers, so it is one
+  // fewer vendor in the critical path. WhatsApp stays for reaching customers
+  // outside India.
+  it("prefers vobiz-voice over whatsapp when both are configured", () => {
+    for (const v of ALL) process.env[v] = "x";
+    expect(configuredChannel()).toBe("vobiz-voice");
+  });
+
+  it("refuses to claim vobiz-voice when any one of its settings is missing", () => {
+    for (const missing of VOICE_VARS) {
+      for (const v of VOICE_VARS) process.env[v] = "x";
+      delete process.env[missing];
+      expect(configuredChannel(), `missing ${missing}`).not.toBe("vobiz-voice");
+    }
+  });
+
   it("refuses to claim whatsapp when any one credential is missing", () => {
     for (const missing of VARS) {
       for (const v of VARS) process.env[v] = "x";

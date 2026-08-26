@@ -60,9 +60,11 @@ export default function BusinessLogin() {
       <Card variant="elevated" padding={32} style={{ width: "100%", maxWidth: 420 }}>
         <h1 className="kw-headline-small mb-1">Sign in</h1>
         <p className="kw-body-medium mb-6" style={{ color: "var(--color-on-surface-variant)" }}>
-          {sent && channel === "whatsapp"
-            ? "We sent a code to your WhatsApp."
-            : "We\u2019ll send a code to your mobile."}
+          {sent && channel === "vobiz-voice"
+            ? "We\u2019re calling you now \u2014 we\u2019ll read out your code."
+            : sent && channel === "whatsapp"
+              ? "We sent a code to your WhatsApp."
+              : "We\u2019ll send a code to your mobile."}
         </p>
 
         <TextField fullWidth label="Mobile number" value={mobile} onChange={(e) => setMobile(e.target.value)} type="tel" disabled={sent} />
