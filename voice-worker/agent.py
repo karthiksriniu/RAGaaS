@@ -112,14 +112,10 @@ class TenantContext:
         self.business_name = business_name
         self.greeting = greeting
         self.instructions = instructions
+
         # Speaker and delivery come from the tenant's chosen preset, resolved
         # server-side. Defaults here only cover an older app deployment that
         # doesn't send them yet.
-        # A knowledge-base lookup started from a partial transcript, so the
-        # ~0.7s round trip overlaps the caller still talking instead of being
-        # added on after they stop. Holds (query, task).
-        self._speculative: tuple[str, asyncio.Task[str]] | None = None
-
         v = voice or {}
         self.speaker: str = v.get("speaker") or "priya"
         self.pace: float = float(v.get("pace") or 0.95)
@@ -273,6 +269,19 @@ class MyBizCareAgent(Agent):
         )
         self._http = http
         self._tenant = tenant
+        # A knowledge-base lookup started from a partial transcript, so the
+        # ~0.7s round trip overlaps the caller still talking instead of being
+        # added on after they stop. Holds (query, task).
+        #
+        # MUST be initialised HERE, on the agent - speculate(),
+        # _cancel_speculative() and _retrieve_for_turn() are all methods of
+        # this class. It briefly lived on TenantContext instead, and because
+        # livekit's Agent defines no __getattr__, every access raised
+        # AttributeError: the proactive lookup was swallowed as "retrieval
+        # failed" and the search_knowledge_base tool returned its
+        # knowledge-base-unreachable branch, so the agent told every caller it
+        # could not access that information while retrieval was in fact fine.
+        self._speculative: tuple[str, asyncio.Task[str]] | None = None
 
     async def on_enter(self) -> None:
         self.session.say(self._tenant.greeting)

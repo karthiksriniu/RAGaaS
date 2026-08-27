@@ -139,3 +139,38 @@ if pre_problems:
         print("  -", c)
     sys.exit(1)
 print("  preemptive generation / speculative retrieval consistent")
+
+
+# --- agent attributes are initialised on the agent ---------------------------
+# livekit's Agent defines no __getattr__, so a `self._x` the class never sets in
+# __init__ raises AttributeError the first time it is touched. That is invisible
+# in review and near-invisible at run time: the proactive lookup catches it as
+# "retrieval failed" and the search_knowledge_base tool returns its
+# knowledge-base-unreachable branch, so every caller is told the agent cannot
+# access that information while retrieval is in fact perfectly healthy. Shipped
+# exactly that way once, with `_speculative` initialised on TenantContext
+# instead of on the agent.
+def _check_agent_attrs() -> list[str]:
+    cls = re.search(r"class MyBizCareAgent\(Agent\):.*?(?=\nasync def |\nclass |\Z)", agent_src, re.S)
+    if not cls:
+        return ["MyBizCareAgent not found in agent.py"]
+    body = cls.group(0)
+    init = re.search(r"def __init__\(self.*?(?=\n    async def |\n    def |\n    @|\Z)", body, re.S)
+    if not init:
+        return ["MyBizCareAgent.__init__ not found"]
+    assigned = set(re.findall(r"self\.(_\w+)\s*(?::[^=\n]+)?=", init.group(0)))
+    used = set(re.findall(r"self\.(_\w+)", body))
+    # Methods are class attributes, so anything defined as one is already bound.
+    used -= set(re.findall(r"def (_\w+)\s*\(", body))
+    missing = sorted(used - assigned)
+    return [f"MyBizCareAgent uses self.{n} but never assigns it in __init__ - "
+            f"raises AttributeError on first access" for n in missing]
+
+
+attr_problems = _check_agent_attrs()
+if attr_problems:
+    print("\nFAILED:")
+    for c in attr_problems:
+        print("  -", c)
+    sys.exit(1)
+print("  every MyBizCareAgent attribute is initialised in __init__")
