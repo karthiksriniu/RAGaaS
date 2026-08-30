@@ -2,10 +2,25 @@ import type { ReactNode } from "react";
 import { Logo } from "./Logo";
 import { Button } from "./kiowa/Button";
 import { Card } from "./kiowa/Card";
+import { getBillingConfig } from "@/lib/billing";
+import { PLAN_PRICE_INR } from "@/lib/upi";
 
-const CONTACT_EMAIL = "karthik.sreeni@gmail.com";
+const CONTACT_EMAIL = "hello@mybizcare.com";
 const MAILTO = `mailto:${CONTACT_EMAIL}?subject=${encodeURIComponent("MyBizCare - let's talk")}`;
 const SIGNUP = "/signup";
+
+/** The price the page advertises must be the price the QR actually asks for,
+ * so it comes from the same config the payment order does. But this is the
+ * public landing page: a database that is down or a settings table that does
+ * not exist yet must cost us a price, not the whole page. */
+async function advertisedPrice(): Promise<number> {
+  try {
+    const { priceInr } = await getBillingConfig();
+    return priceInr;
+  } catch {
+    return PLAN_PRICE_INR;
+  }
+}
 
 function Eyebrow({ children, dark = false }: { children: ReactNode; dark?: boolean }) {
   return (
@@ -30,7 +45,7 @@ function IconCircle({ icon, size = 56 }: { icon: string; size?: number }) {
         color: "var(--color-primary)",
       }}
     >
-      <span className="material-symbols-rounded" style={{ fontSize: size * 0.5 }}>
+      <span className="material-symbols-rounded" aria-hidden="true" style={{ fontSize: size * 0.5 }}>
         {icon}
       </span>
     </div>
@@ -74,14 +89,117 @@ function FeatureCard({ icon, title, description }: { icon: string; title: string
   );
 }
 
+/** The CTA that sits on a dark section. A filled Button there is deep teal on
+ * near-black, which reads as a shape rather than a button - so the dark-section
+ * CTA inverts: light fill, dark label. Both tokens flip together under a theme
+ * swap, so this stays right in either theme. */
+function DarkCta({ children, icon }: { children: ReactNode; icon?: string }) {
+  return (
+    <a href={SIGNUP}>
+      <Button
+        variant="filled"
+        size="large"
+        icon={icon}
+        style={{ background: "var(--color-inverse-primary)", color: "var(--color-inverse-surface)" }}
+      >
+        {children}
+      </Button>
+    </a>
+  );
+}
+
+/** One side of a side-by-side comparison. `tone` decides whether the items read
+ * as the thing being rejected or the thing being offered. */
+function CompareColumn({
+  title,
+  items,
+  tone,
+  dark = false,
+}: {
+  title: string;
+  items: string[];
+  tone: "them" | "us";
+  dark?: boolean;
+}) {
+  const good = tone === "us";
+  const titleColor = dark
+    ? good
+      ? "var(--color-inverse-primary)"
+      : "#F2B8B5"
+    : good
+      ? "var(--color-primary)"
+      : "var(--color-on-surface-variant)";
+
+  return (
+    <div
+      className="rounded-2xl p-6"
+      style={{
+        background: dark
+          ? good
+            ? "rgba(158,239,253,0.12)"
+            : "rgba(255,255,255,0.06)"
+          : good
+            ? "var(--color-primary-container)"
+            : "var(--color-surface-container-highest)",
+      }}
+    >
+      <p className="kw-title-medium" style={{ color: titleColor }}>
+        {title}
+      </p>
+      <ul className="mt-4 flex flex-col gap-3">
+        {items.map((t) => (
+          <li key={t} className="flex items-start gap-2">
+            <span
+              className="material-symbols-rounded"
+              aria-hidden="true"
+              style={{
+                fontSize: 20,
+                lineHeight: "24px",
+                color: titleColor,
+                opacity: good ? 1 : 0.7,
+              }}
+            >
+              {good ? "check" : "close"}
+            </span>
+            <span
+              className="kw-body-medium"
+              style={{
+                color: dark
+                  ? "var(--color-inverse-on-surface)"
+                  : good
+                    ? "var(--color-on-primary-container)"
+                    : "var(--color-on-surface-variant)",
+                opacity: dark && !good ? 0.75 : 1,
+              }}
+            >
+              {t}
+            </span>
+          </li>
+        ))}
+      </ul>
+    </div>
+  );
+}
+
 const NAV_LINKS = [
+  { href: "#difference", label: "Why us" },
   { href: "#how-it-works", label: "How it works" },
-  { href: "#trust", label: "Trust & privacy" },
-  { href: "#industries", label: "Industries" },
-  { href: "#contact", label: "Contact" },
+  { href: "#on-the-call", label: "On the call" },
+  { href: "#pricing", label: "Pricing" },
 ];
 
-export function MarketingSite() {
+const PRICING_INCLUDES = [
+  "A phone number of your own",
+  "An agent that learns from your website and your documents",
+  "As many documents and price lists as you want to add",
+  "Answers on the phone, on web chat and on WhatsApp",
+  "Handover to your team when a caller needs a person",
+  "Change the voice, the knowledge and the style whenever you like",
+];
+
+export async function MarketingSite() {
+  const price = await advertisedPrice();
+
   return (
     <div style={{ background: "var(--color-surface)" }}>
       {/* Nav */}
@@ -89,9 +207,12 @@ export function MarketingSite() {
         className="sticky top-0 z-10 flex items-center justify-between px-6 py-4"
         style={{ background: "var(--color-surface)", borderBottom: "1px solid var(--color-outline-variant)" }}
       >
+        {/* The wordmark goes at the narrowest widths. On a 375px phone the mark,
+            the name and both buttons do not fit, and the name is what collides
+            with Login - the logo alone still identifies the page. */}
         <div className="flex items-center gap-3">
           <Logo size={32} />
-          <span className="kw-title-medium" style={{ color: "var(--color-on-surface)" }}>
+          <span className="kw-title-medium hidden sm:inline" style={{ color: "var(--color-on-surface)" }}>
             MyBizCare
           </span>
         </div>
@@ -112,7 +233,7 @@ export function MarketingSite() {
           </a>
           <a href={SIGNUP}>
             <Button variant="filled" size="small">
-              Sign up
+              Get started
             </Button>
           </a>
         </div>
@@ -124,93 +245,97 @@ export function MarketingSite() {
         style={{ background: "var(--color-inverse-surface)", color: "var(--color-inverse-on-surface)" }}
       >
         <div className="mx-auto max-w-3xl text-center">
-          <div className="mb-6 flex justify-center">
-            <Logo size={48} />
-          </div>
-          <h1 className="kw-display-small" style={{ color: "var(--color-inverse-on-surface)" }}>
-            Private AI customer care, built on what you know.
-          </h1>
-          <p className="kw-body-large mx-auto mt-5 max-w-xl" style={{ color: "var(--color-inverse-primary)" }}>
-            Instant, accurate answers for your customers — grounded in your own knowledge, on the channels they
-            already use.
+          <p
+            className="kw-label-large mb-4 uppercase"
+            style={{ color: "var(--color-inverse-primary)", letterSpacing: "1.2px" }}
+          >
+            AI that answers your business calls
           </p>
-          <div className="mt-8 flex justify-center gap-3">
-            <a href={SIGNUP}>
-              <Button variant="filled" size="large" icon="arrow_forward">
-                Get started
+          <h1 className="kw-display-small" style={{ color: "var(--color-inverse-on-surface)" }}>
+            Never miss a customer call again.
+          </h1>
+          <p className="kw-body-large mx-auto mt-5 max-w-2xl" style={{ color: "var(--color-inverse-primary)" }}>
+            Set it up yourself in the next few minutes. Your customers get a number to call, and it answers
+            them like someone who works for you — day or night, in English or their own language.
+          </p>
+          <div className="mt-8 flex flex-wrap items-center justify-center gap-3">
+            <DarkCta icon="arrow_forward">Set up my agent</DarkCta>
+            <a href="#how-it-works">
+              <Button variant="text" size="large" style={{ color: "var(--color-inverse-primary)" }}>
+                See how it works
               </Button>
             </a>
           </div>
+          <p className="kw-body-small mt-6" style={{ color: "var(--color-inverse-on-surface)", opacity: 0.7 }}>
+            ₹{price} a month · No setup fee · No contract · Nobody to talk to first
+          </p>
         </div>
       </section>
 
-      {/* Problem */}
-      <Section>
-        <Eyebrow>The problem</Eyebrow>
-        <h2 className="kw-headline-medium">Customer support is breaking under its own weight</h2>
-        <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
-          <FeatureCard icon="schedule" title="Slow responses" description="Every extra minute of wait costs you a customer's patience — and often the sale." />
-          <FeatureCard icon="dark_mode" title="After hours, no answer" description="Questions don't stop at 6pm. Most support teams do." />
-          <FeatureCard icon="report" title="Inconsistent answers" description="Different agent, different answer. Trust erodes one reply at a time." />
-          <FeatureCard icon="local_fire_department" title="Rising cost, team burnout" description="Scaling support with more people gets expensive — and hard to sustain." />
-        </div>
-      </Section>
-
-      {/* Generic AI vs MyBizCare */}
-      <Section dark>
-        <Eyebrow dark>Why generic AI isn&apos;t enough</Eyebrow>
-        <h2 className="kw-headline-medium" style={{ color: "var(--color-inverse-on-surface)" }}>
-          Off-the-shelf chatbots weren&apos;t built for your business
+      {/* The differentiator */}
+      <Section id="difference">
+        <Eyebrow>What makes us different</Eyebrow>
+        <h2 className="kw-headline-medium">
+          Everyone else starts with a sales call. You start with a signup form.
         </h2>
+        <p className="kw-body-large mt-4 max-w-2xl" style={{ color: "var(--color-on-surface-variant)" }}>
+          Most companies want a demo, a scoping call and a quote before you ever hear the thing work. Here you
+          can have your agent picking up calls before that first meeting would even have been booked.
+        </p>
         <div className="mt-10 grid gap-6 md:grid-cols-2">
-          <div className="rounded-2xl p-6" style={{ background: "rgba(255,255,255,0.06)" }}>
-            <p className="kw-title-medium" style={{ color: "#F2B8B5" }}>
-              Generic AI chatbot
-            </p>
-            <ul className="mt-3 flex flex-col gap-2">
-              {["Trained on the open internet", "Makes things up with total confidence", "Doesn't know your policies or products", "The same generic answer for everyone"].map((t) => (
-                <li key={t} className="kw-body-medium" style={{ color: "var(--color-inverse-on-surface)", opacity: 0.75 }}>
-                  {t}
-                </li>
-              ))}
-            </ul>
-          </div>
-          <div className="rounded-2xl p-6" style={{ background: "rgba(158,239,253,0.12)" }}>
-            <p className="kw-title-medium" style={{ color: "var(--color-inverse-primary)" }}>
-              MyBizCare
-            </p>
-            <ul className="mt-3 flex flex-col gap-2">
-              {["Trained only on your knowledge", "Tells you when it isn't sure", "Knows your policies, tone, and products", "Built around your business, specifically"].map((t) => (
-                <li key={t} className="kw-body-medium" style={{ color: "var(--color-inverse-on-surface)" }}>
-                  {t}
-                </li>
-              ))}
-            </ul>
-          </div>
-        </div>
-      </Section>
-
-      {/* Three commitments */}
-      <Section>
-        <Eyebrow>The promise</Eyebrow>
-        <h2 className="kw-headline-medium">One private AI agent. Three commitments.</h2>
-        <div className="mt-10 grid gap-4 md:grid-cols-3">
-          <FeatureCard icon="lock" title="Private & secure" description="Your data stays yours — never shared, never reused across customers." />
-          <FeatureCard icon="menu_book" title="Grounded in your knowledge" description="Every answer traces back to your own documents and policies — not the open web." />
-          <FeatureCard icon="diversity_2" title="Knows its limits" description="When it isn't confident, it hands off to your team instead of guessing." />
+          <CompareColumn
+            tone="them"
+            title="The usual way"
+            items={[
+              "Fill a form and wait for someone to call you back",
+              "Sit through a demo, then a scoping call",
+              "Weeks of setup, done by their team",
+              "An IT project to connect it to anything",
+              "Price on request, and a yearly contract",
+            ]}
+          />
+          <CompareColumn
+            tone="us"
+            title="With MyBizCare"
+            items={[
+              "Sign up yourself, right now, on your phone",
+              "Describe your business in your own words",
+              "It reads your website and learns the rest",
+              "You end up with a working phone number",
+              `₹${price} a month, and you can stop any time`,
+            ]}
+          />
         </div>
       </Section>
 
       {/* How it works */}
-      <Section id="how-it-works">
-        <Eyebrow>How it works</Eyebrow>
-        <h2 className="kw-headline-medium">From your knowledge to a trusted answer</h2>
+      <Section id="how-it-works" dark>
+        <Eyebrow dark>How it works</Eyebrow>
+        <h2 className="kw-headline-medium" style={{ color: "var(--color-inverse-on-surface)" }}>
+          Four steps, and nobody else has to be involved
+        </h2>
         <div className="mt-10 grid gap-8 sm:grid-cols-2 lg:grid-cols-4">
           {[
-            { n: 1, title: "Share your knowledge", desc: "Docs, FAQs, policies — whatever your team already has." },
-            { n: 2, title: "We build your private engine", desc: "A secure, isolated AI knowledge base — yours alone." },
-            { n: 3, title: "Customers ask", desc: "Chat, WhatsApp, or voice — whatever's natural for them." },
-            { n: 4, title: "They get a grounded answer", desc: "Cited, accurate, and consistent — every time." },
+            {
+              n: 1,
+              title: "Tell it about your business",
+              desc: "Type it out, or just tap the mic and say it — whatever you would tell someone on their first day.",
+            },
+            {
+              n: 2,
+              title: "It reads your website",
+              desc: "Your services, your rates, the questions people always ask. It picks all that up on its own.",
+            },
+            {
+              n: 3,
+              title: "Verify and pay",
+              desc: `A code to your mobile, ₹${price} on UPI. That is the whole checkout.`,
+            },
+            {
+              n: 4,
+              title: "Your line goes live",
+              desc: "You get a phone number. Put it on your shopfront, your card, your listing. It starts answering.",
+            },
           ].map((step) => (
             <div key={step.n} className="text-center">
               <div
@@ -219,115 +344,180 @@ export function MarketingSite() {
                   width: 44,
                   height: 44,
                   borderRadius: "var(--radius-full)",
-                  background: "var(--color-primary)",
-                  color: "var(--color-on-primary)",
+                  background: "var(--color-inverse-primary)",
+                  color: "var(--color-inverse-surface)",
                 }}
               >
                 {step.n}
               </div>
-              <p className="kw-title-medium mt-3">{step.title}</p>
-              <p className="kw-body-medium mt-1" style={{ color: "var(--color-on-surface-variant)" }}>
+              <p className="kw-title-medium mt-3" style={{ color: "var(--color-inverse-on-surface)" }}>
+                {step.title}
+              </p>
+              <p className="kw-body-medium mt-1" style={{ color: "var(--color-inverse-on-surface)", opacity: 0.75 }}>
                 {step.desc}
               </p>
             </div>
           ))}
         </div>
-      </Section>
-
-      {/* Channels */}
-      <Section>
-        <Eyebrow>Everywhere your customers are</Eyebrow>
-        <h2 className="kw-headline-medium">One agent, every channel</h2>
-        <div className="mt-10 grid gap-4 md:grid-cols-3">
-          <FeatureCard icon="chat_bubble" title="Web chat" description="A native assistant right on your site." />
-          <FeatureCard icon="smartphone" title="WhatsApp" description="Voice notes and text, answered instantly." />
-          <FeatureCard icon="mic" title="Voice" description="Speak the question, hear the answer back." />
+        <div className="mt-12 flex justify-center">
+          <DarkCta icon="arrow_forward">Set up my agent</DarkCta>
         </div>
       </Section>
 
-      {/* Built-in judgment */}
-      <Section id="trust">
-        <Eyebrow>Built-in judgment</Eyebrow>
-        <h2 className="kw-headline-medium">It knows what it doesn&apos;t know</h2>
+      {/* On the call */}
+      <Section id="on-the-call">
+        <Eyebrow>On the call</Eyebrow>
+        <h2 className="kw-headline-medium">It sounds like someone who works there</h2>
+        <div className="mt-10 grid gap-4 sm:grid-cols-2 lg:grid-cols-4">
+          <FeatureCard
+            icon="forum"
+            title="A real conversation"
+            description="No press-1-for-sales menus. People just say what they want, the way they would say it to you."
+          />
+          <FeatureCard
+            icon="translate"
+            title="Your customer's language"
+            description="English, or the regional language they are comfortable in — Tamil and Malayalam today. Switch mid-sentence and it switches too."
+          />
+          <FeatureCard
+            icon="schedule"
+            title="It always picks up"
+            description="Nights, Sundays, the festival rush. Nobody is left holding, and nobody hangs up."
+          />
+          <FeatureCard
+            icon="record_voice_over"
+            title="The voice you pick"
+            description="Choose how your agent sounds from your dashboard. The very next call uses it."
+          />
+        </div>
+      </Section>
+
+      {/* Grounded, not generic */}
+      <Section dark>
+        <Eyebrow dark>Why not just use a chatbot</Eyebrow>
+        <h2 className="kw-headline-medium" style={{ color: "var(--color-inverse-on-surface)" }}>
+          A general AI does not know your prices
+        </h2>
+        <div className="mt-10 grid gap-6 md:grid-cols-2">
+          <CompareColumn
+            dark
+            tone="them"
+            title="A general AI chatbot"
+            items={[
+              "Learned from the open internet",
+              "Sounds just as confident when it is wrong",
+              "Does not know your rates, timings or rules",
+              "Gives your customer the same answer it gives everyone",
+            ]}
+          />
+          <CompareColumn
+            dark
+            tone="us"
+            title="Your MyBizCare agent"
+            items={[
+              "Learns only from what you give it",
+              "Says so plainly when it is not sure",
+              "Knows your services, your prices, your policies",
+              "Answers as your business, and only about your business",
+            ]}
+          />
+        </div>
+      </Section>
+
+      {/* Knows its limits */}
+      <Section>
+        <Eyebrow>When it is not sure</Eyebrow>
+        <h2 className="kw-headline-medium">It does not make things up</h2>
         <div className="mt-10 grid gap-4 md:grid-cols-3">
           <Card variant="filled" padding={24} style={{ background: "var(--color-secondary-container)" }}>
-            <span className="material-symbols-rounded" style={{ fontSize: 32, color: "var(--color-on-secondary-container)" }}>
+            <span className="material-symbols-rounded" aria-hidden="true" style={{ fontSize: 32, color: "var(--color-on-secondary-container)" }}>
               check_circle
             </span>
             <p className="kw-title-medium mt-3" style={{ color: "var(--color-on-secondary-container)" }}>
-              Confident answer
+              It knows the answer
             </p>
             <p className="kw-body-medium mt-1" style={{ color: "var(--color-on-secondary-container)", opacity: 0.85 }}>
-              Clear, grounded, and ready to act on.
+              It answers straight away and gets on with the call.
             </p>
           </Card>
           <Card variant="filled" padding={24} style={{ background: "var(--color-tertiary-container)" }}>
-            <span className="material-symbols-rounded" style={{ fontSize: 32, color: "var(--color-on-tertiary-container)" }}>
+            <span className="material-symbols-rounded" aria-hidden="true" style={{ fontSize: 32, color: "var(--color-on-tertiary-container)" }}>
               warning
             </span>
             <p className="kw-title-medium mt-3" style={{ color: "var(--color-on-tertiary-container)" }}>
-              Flagged for review
+              It is only half sure
             </p>
             <p className="kw-body-medium mt-1" style={{ color: "var(--color-on-tertiary-container)", opacity: 0.85 }}>
-              Best available guidance, marked as such.
+              It gives what it actually has, and says so — instead of inventing the rest.
             </p>
           </Card>
           <Card variant="filled" padding={24}>
-            <span className="material-symbols-rounded" style={{ fontSize: 32, color: "var(--color-on-surface)" }}>
+            <span className="material-symbols-rounded" aria-hidden="true" style={{ fontSize: 32, color: "var(--color-on-surface)" }}>
               support_agent
             </span>
-            <p className="kw-title-medium mt-3">Handed to your team</p>
+            <p className="kw-title-medium mt-3">You are the better answer</p>
             <p className="kw-body-medium mt-1" style={{ color: "var(--color-on-surface-variant)" }}>
-              Not sure? Straight to a human — instantly.
+              It hands the caller to your team rather than take a guess.
             </p>
           </Card>
         </div>
-        <p className="kw-body-large mt-6 text-center italic" style={{ color: "var(--color-on-surface-variant)" }}>
-          No made-up answers. No guessing on the things that matter.
+        <p className="kw-body-large mt-6 text-center" style={{ color: "var(--color-on-surface-variant)" }}>
+          The worst thing an agent can do is tell your customer something untrue, confidently. This one will
+          not.
         </p>
       </Section>
 
-      {/* Isolation */}
-      <Section dark>
-        <Eyebrow dark>Private by design</Eyebrow>
-        <h2 className="kw-headline-medium" style={{ color: "var(--color-inverse-on-surface)" }}>
-          Your knowledge stays yours
-        </h2>
-        <div className="mt-10 flex flex-wrap items-center justify-center gap-4">
-          {["Business A", "Business B", "Business C"].map((label, i) => (
-            <div key={label} className="flex items-center gap-4">
-              <div
-                className="flex flex-col items-center gap-2 rounded-2xl px-8 py-6"
-                style={{ background: "rgba(255,255,255,0.06)" }}
-              >
-                <span className="material-symbols-rounded" style={{ fontSize: 28, color: "var(--color-inverse-primary)" }}>
-                  lock_person
-                </span>
-                <p className="kw-title-medium" style={{ color: "var(--color-inverse-on-surface)" }}>
-                  {label}
-                </p>
-              </div>
-              {i < 2 && (
-                <span className="material-symbols-rounded" style={{ fontSize: 20, color: "var(--color-inverse-on-surface)", opacity: 0.35 }}>
-                  block
-                </span>
-              )}
-            </div>
-          ))}
+      {/* One knowledge base, every channel */}
+      <Section>
+        <Eyebrow>Beyond the phone</Eyebrow>
+        <h2 className="kw-headline-medium">Teach it once. It answers everywhere.</h2>
+        <p className="kw-body-large mt-4 max-w-2xl" style={{ color: "var(--color-on-surface-variant)" }}>
+          Everything your agent knows sits in one place. So the answer a customer gets on the phone is the
+          same one they get on your web page or on WhatsApp — and when you change a price, it changes in all
+          three at once.
+        </p>
+        <div className="mt-10 grid gap-4 md:grid-cols-3">
+          <FeatureCard icon="call" title="Phone calls" description="Your own number, answered out loud. This is the main event." />
+          <FeatureCard icon="chat_bubble" title="Web chat" description="A chat box on your own MyBizCare page, answering from the same knowledge." />
+          <FeatureCard icon="smartphone" title="WhatsApp" description="Typed questions and voice notes, answered the same way." />
         </div>
-        <p className="kw-body-large mt-8 text-center" style={{ color: "var(--color-inverse-on-surface)", opacity: 0.75 }}>
-          Every customer&apos;s knowledge lives in its own locked space — never mixed, never cross-referenced.
+      </Section>
+
+      {/* Stays yours */}
+      <Section>
+        <Eyebrow>It stays yours</Eyebrow>
+        <h2 className="kw-headline-medium">Change anything yourself, whenever you like</h2>
+        <div className="mt-10 grid gap-4 md:grid-cols-3">
+          <FeatureCard
+            icon="folder"
+            title="What it knows"
+            description="Add documents, price lists, policies. Take out what is out of date. No ticket, no waiting on anyone."
+          />
+          <FeatureCard
+            icon="graphic_eq"
+            title="How it sounds"
+            description="Pick a voice that suits your business. Change your mind as often as you like."
+          />
+          <FeatureCard
+            icon="tune"
+            title="How it answers"
+            description="Tell it to keep replies short, to always mention delivery charges, to never discuss competitors. In plain English."
+          />
+        </div>
+        <p className="kw-body-large mt-8 text-center" style={{ color: "var(--color-on-surface-variant)" }}>
+          What you upload is used to answer your customers and nothing else. It is never shared, and never
+          used to train anybody else&apos;s agent.
         </p>
       </Section>
 
       {/* Industries */}
       <Section id="industries">
-        <Eyebrow>Built to generalize</Eyebrow>
-        <h2 className="kw-headline-medium">One platform. Every kind of business.</h2>
+        <Eyebrow>Who it is for</Eyebrow>
+        <h2 className="kw-headline-medium">If customers call you, this is for you</h2>
         <div className="mt-10 grid gap-4 sm:grid-cols-3 lg:grid-cols-5">
           {[
-            { icon: "shopping_cart", label: "Retail" },
-            { icon: "health_and_safety", label: "Healthcare" },
+            { icon: "storefront", label: "Shops & retail" },
+            { icon: "health_and_safety", label: "Clinics & wellness" },
             { icon: "agriculture", label: "Agriculture" },
             { icon: "account_balance", label: "Financial services" },
             { icon: "description", label: "Professional services" },
@@ -342,30 +532,50 @@ export function MarketingSite() {
         </div>
       </Section>
 
-      {/* Getting started */}
-      <Section>
-        <Eyebrow>Getting started</Eyebrow>
-        <h2 className="kw-headline-medium">Live in days, not months</h2>
-        <div className="mt-10 grid gap-8 sm:grid-cols-3">
-          {[
-            { icon: "upload", title: "Share your content", desc: "Send us what your team already has." },
-            { icon: "settings", title: "We configure your agent", desc: "Tone, channels, and escalation — set up for you." },
-            { icon: "rocket_launch", title: "Go live", desc: "Real answers, on real channels, from day one." },
-          ].map((step) => (
-            <div key={step.title} className="text-center">
-              <div className="mx-auto">
-                <IconCircle icon={step.icon} />
-              </div>
-              <p className="kw-title-medium mt-3">{step.title}</p>
-              <p className="kw-body-medium mt-1" style={{ color: "var(--color-on-surface-variant)" }}>
-                {step.desc}
-              </p>
-            </div>
-          ))}
-        </div>
+      {/* Pricing */}
+      <Section id="pricing">
+        <Eyebrow>Pricing</Eyebrow>
+        <h2 className="kw-headline-medium">₹{price} a month. That is the whole price list.</h2>
+        <p className="kw-body-large mt-4 max-w-2xl" style={{ color: "var(--color-on-surface-variant)" }}>
+          One plan, everything in it. No setup fee, no per-call charge, and nothing you have to ask us for a
+          quote on.
+        </p>
+        <Card variant="outlined" padding={32} className="mt-10" style={{ maxWidth: 560 }}>
+          <div className="flex items-baseline justify-between">
+            <span className="kw-title-large">Standard</span>
+            <span className="kw-headline-medium">
+              ₹{price}
+              <span className="kw-body-medium" style={{ color: "var(--color-on-surface-variant)" }}>
+                /month
+              </span>
+            </span>
+          </div>
+          <ul className="mt-5 flex flex-col gap-3">
+            {PRICING_INCLUDES.map((f) => (
+              <li key={f} className="flex items-start gap-2">
+                <span className="material-symbols-rounded" aria-hidden="true" style={{ fontSize: 20, lineHeight: "24px", color: "var(--color-primary)" }}>
+                  check
+                </span>
+                <span className="kw-body-medium" style={{ color: "var(--color-on-surface-variant)" }}>
+                  {f}
+                </span>
+              </li>
+            ))}
+          </ul>
+          <div className="mt-7">
+            <a href={SIGNUP}>
+              <Button variant="filled" size="large" fullWidth icon="arrow_forward">
+                Set up my agent
+              </Button>
+            </a>
+          </div>
+          <p className="kw-body-small mt-4 text-center" style={{ color: "var(--color-on-surface-variant)" }}>
+            Pay by UPI. It renews every month, and stops when you stop paying.
+          </p>
+        </Card>
       </Section>
 
-      {/* Final CTA / Contact */}
+      {/* Final CTA */}
       <section
         id="contact"
         className="px-6 py-24 text-center"
@@ -373,17 +583,13 @@ export function MarketingSite() {
       >
         <div className="mx-auto max-w-2xl">
           <h2 className="kw-headline-large" style={{ color: "var(--color-inverse-on-surface)" }}>
-            Let&apos;s build your private AI agent.
+            Your customers are already calling.
           </h2>
           <p className="kw-body-large mx-auto mt-4 max-w-lg" style={{ color: "var(--color-inverse-primary)" }}>
-            See it answer real questions from your own knowledge — in your very first walkthrough.
+            Give them something that always picks up. A few minutes from now, it can be answering.
           </p>
           <div className="mt-8 flex justify-center">
-            <a href={SIGNUP}>
-              <Button variant="filled" size="large" icon="arrow_forward">
-                Get started
-              </Button>
-            </a>
+            <DarkCta icon="arrow_forward">Set up my agent</DarkCta>
           </div>
         </div>
       </section>

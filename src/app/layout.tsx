@@ -18,9 +18,29 @@ const roboto = Roboto({
   weight: ["400", "500", "700"],
 });
 
+// Deliberately price-free: the price on the page is read from billing config
+// at request time, and a number hardcoded here would be the one thing that
+// silently drifts away from what the payment QR actually asks for.
+const TAGLINE =
+  "Set up your own AI voice agent in minutes. Your customers get a number to call, " +
+  "answered day or night, in English or their own language. No demo, no sales call.";
+
 export const metadata: Metadata = {
-  title: "MyBizCare",
-  description: "Voice-first AI advisory assistant",
+  metadataBase: new URL("https://www.mybizcare.com"),
+  title: "MyBizCare - AI that answers your business calls",
+  description: TAGLINE,
+  openGraph: {
+    title: "MyBizCare - AI that answers your business calls",
+    description: TAGLINE,
+    url: "/",
+    siteName: "MyBizCare",
+    type: "website",
+  },
+  twitter: {
+    card: "summary_large_image",
+    title: "MyBizCare - AI that answers your business calls",
+    description: TAGLINE,
+  },
 };
 
 export default function RootLayout({
