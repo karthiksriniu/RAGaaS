@@ -8,6 +8,7 @@ import {
   updateTenantAnswerConfig,
 } from "@/lib/tenants";
 import { getBillingConfig, latestOrderForTenant } from "@/lib/billing";
+import { tenantChatUrl } from "@/lib/tenantHost";
 import { VOICE_PRESETS, resolveVoicePreset } from "@/lib/voicePresets";
 
 export const runtime = "nodejs";
@@ -49,6 +50,8 @@ export async function GET(req: NextRequest) {
       licenseState: expired ? "expired" : awaitingConfirmation ? "provisional" : "active",
       planPriceInr: (await getBillingConfig()).priceInr,
       subdomain: tenant.subdomain,
+      // Composed server-side: only this process knows the root domain.
+      chatUrl: tenantChatUrl(tenant.subdomain),
       mobile: acct.rows[0]?.mobile ?? null,
       description: desc.rows[0]?.business_description ?? null,
       website: desc.rows[0]?.website_url ?? null,

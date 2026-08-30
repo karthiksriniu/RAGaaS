@@ -10,14 +10,17 @@ import { ListItem } from "@/components/kiowa/ListItem";
 import { IconButton } from "@/components/kiowa/IconButton";
 import { ProgressIndicator } from "@/components/kiowa/ProgressIndicator";
 import { Logo } from "@/components/Logo";
+import { ShareableValue } from "@/components/ShareableValue";
 import { PLAN_FEATURES, UpiPayment, type PaymentInstructions } from "@/components/UpiPayment";
 
-type Section = "settings" | "knowledge" | "config";
+type Section = "agents" | "settings" | "knowledge" | "config";
 
 interface Me {
   tenantId: string;
   businessName: string;
   subdomain: string;
+  /** Public web-chat URL, or null if this deployment has no root domain. */
+  chatUrl: string | null;
   mobile: string | null;
   description: string | null;
   website: string | null;
@@ -42,6 +45,7 @@ interface Source {
 }
 
 const NAV: { id: Section; label: string; icon: string }[] = [
+  { id: "agents", label: "AI Agents", icon: "smart_toy" },
   { id: "settings", label: "Settings", icon: "settings" },
   { id: "knowledge", label: "Knowledge Sources", icon: "folder" },
   { id: "config", label: "Configurations", icon: "tune" },
@@ -56,7 +60,7 @@ function formatDate(iso: string | null): string {
 
 export default function BusinessDashboard() {
   const router = useRouter();
-  const [section, setSection] = useState<Section>("settings");
+  const [section, setSection] = useState<Section>("agents");
   const [me, setMe] = useState<Me | null>(null);
   const [loading, setLoading] = useState(true);
 
@@ -307,6 +311,52 @@ export default function BusinessDashboard() {
         </nav>
 
         <main className="min-w-0 flex-1">
+          {section === "agents" && (
+            <>
+              <h1 className="kw-headline-small mb-1">AI Agents</h1>
+              <p className="kw-body-medium mb-4" style={{ color: "var(--color-on-surface-variant)" }}>
+                Where your customers reach your agent. Share these anywhere you already
+                talk to them.
+              </p>
+
+              <div className="flex flex-col gap-4">
+                <ShareableValue
+                  icon="call"
+                  label="Voice — your phone number"
+                  value={me?.voicePhoneNumber ?? null}
+                  placeholder="Being assigned"
+                  hint={
+                    me?.voicePhoneNumber
+                      ? "What your customers dial. Your agent answers it."
+                      : me?.licenseState === "provisional"
+                        ? "Assigned as soon as we confirm your payment."
+                        : "Being assigned — we'll be in touch shortly."
+                  }
+                  shareTitle={me?.businessName ? `Call ${me.businessName}` : "Call us"}
+                  shareText={
+                    me?.voicePhoneNumber
+                      ? `Call ${me.businessName} on ${me.voicePhoneNumber}`
+                      : undefined
+                  }
+                />
+
+                {/* Hidden rather than shown broken: with no root domain
+                    configured there is no address that would actually answer. */}
+                {me?.chatUrl && (
+                  <ShareableValue
+                    icon="chat_bubble"
+                    label="Web chat — your agent's page"
+                    value={me.chatUrl}
+                    href={me.chatUrl}
+                    hint="Anyone who opens this can type questions and get the same answers."
+                    shareTitle={me?.businessName ? `Chat with ${me.businessName}` : "Chat with us"}
+                    shareText={`Ask ${me.businessName} anything: ${me.chatUrl}`}
+                  />
+                )}
+              </div>
+            </>
+          )}
+
           {section === "settings" && (
             <>
               <h1 className="kw-headline-small mb-4">Settings</h1>
@@ -322,15 +372,6 @@ export default function BusinessDashboard() {
                   {[
                     { label: "Mobile number", value: me?.mobile ?? "—", hint: "Used to sign in. Cannot be changed." },
                     { label: "Account name", value: me?.tenantId ?? "—", hint: "Permanent — it identifies your agent and your data." },
-                    {
-                      label: "Your phone number",
-                      value: me?.voicePhoneNumber ?? "Being assigned",
-                      hint: me?.voicePhoneNumber
-                        ? "What your customers dial."
-                        : me?.licenseState === "provisional"
-                          ? "Assigned as soon as we confirm your payment."
-                          : "Being assigned — we'll be in touch shortly.",
-                    },
                     {
                       label: "Plan",
                       value: `\u20b9${me?.planPriceInr ?? 999}/month`,

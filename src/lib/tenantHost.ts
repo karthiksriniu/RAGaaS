@@ -40,3 +40,18 @@ export function isRootDomainHost(host: string): boolean {
   if (!rootDomain) return false;
   return host === rootDomain || host === `www.${rootDomain}`;
 }
+
+/** The public web-chat URL for a tenant, or null where this deployment has no
+ * root domain configured.
+ *
+ * Built here rather than in the browser because only the server knows
+ * TENANT_ROOT_DOMAIN, and it genuinely differs per environment - production
+ * hangs tenants off mybizcare.com while staging hangs them off
+ * staging.mybizcare.com. A client guessing from window.location would get
+ * staging right by accident and production wrong the moment the dashboard is
+ * ever served from a host that is not the tenant root. */
+export function tenantChatUrl(subdomain: string): string | null {
+  const rootDomain = process.env.TENANT_ROOT_DOMAIN;
+  if (!rootDomain || !subdomain) return null;
+  return `https://${subdomain}.${rootDomain}`;
+}
