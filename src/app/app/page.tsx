@@ -108,6 +108,44 @@ export default function BusinessDashboard() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [me?.kbEnhancementStatus]);
 
+  // The phone number arrives LATER than everything else on this page. It is
+  // bought when an admin confirms the payment - which is a separate step from
+  // the business paying, and can land seconds after signup or a day later. The
+  // poll above does not cover it: that one is gated on the website read, which
+  // has normally finished BEFORE the number is even bought. Measured on a real
+  // signup, the KB settled at 09:21:44 and the number would have appeared at
+  // 09:22:16, half a minute after the only timer had stopped. So the dashboard
+  // sat on "Being assigned" until the business thought to reload.
+  //
+  // Bounded, not open-ended: a tenant whose payment is never confirmed would
+  // otherwise hold a timer open forever on an idle dashboard, which is exactly
+  // what the comment above exists to prevent. Ten minutes covers an admin
+  // confirming while the business is still on the page; anything slower is
+  // picked up when they next look at the tab.
+  useEffect(() => {
+    if (!me || me.voicePhoneNumber || me.licenseState === "expired") return;
+    const startedAt = Date.now();
+    const t = setInterval(() => {
+      if (Date.now() - startedAt > 10 * 60 * 1000) return clearInterval(t);
+      loadMe();
+    }, 10000);
+    return () => clearInterval(t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [me?.voicePhoneNumber, me?.licenseState]);
+
+  // Returning to the tab is the other moment the number may have appeared -
+  // a payment confirmed hours later, with the page left open behind it. Costs
+  // nothing while the tab is hidden, unlike a standing timer.
+  useEffect(() => {
+    if (!me || me.voicePhoneNumber) return;
+    const onVisible = () => {
+      if (document.visibilityState === "visible") loadMe();
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    return () => document.removeEventListener("visibilitychange", onVisible);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [me?.voicePhoneNumber]);
+
   async function save(body: Record<string, unknown>, label: string) {
     await fetch("/api/business/me", {
       method: "PATCH",
