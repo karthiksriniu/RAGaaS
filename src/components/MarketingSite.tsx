@@ -181,6 +181,33 @@ function CompareColumn({
   );
 }
 
+/** Where the number goes. The differentiator is not "we are self-service", it
+ * is that an owner leaves with something they can paste somewhere today, so
+ * these are named as places they already have rather than as "channels". */
+function PlacementChip({ icon, label }: { icon: string; label: string }) {
+  return (
+    <span
+      className="inline-flex items-center gap-2 rounded-full px-4 py-2"
+      style={{ background: "var(--color-surface-container-highest)" }}
+    >
+      <span className="material-symbols-rounded" aria-hidden="true" style={{ fontSize: 18, color: "var(--color-primary)" }}>
+        {icon}
+      </span>
+      <span className="kw-body-medium" style={{ color: "var(--color-on-surface-variant)" }}>
+        {label}
+      </span>
+    </span>
+  );
+}
+
+const PLACEMENTS = [
+  { icon: "photo_camera", label: "Your Instagram bio" },
+  { icon: "chat", label: "Your WhatsApp profile" },
+  { icon: "location_on", label: "Your Google listing" },
+  { icon: "storefront", label: "The board outside your shop" },
+  { icon: "badge", label: "Your visiting card" },
+];
+
 const NAV_LINKS = [
   { href: "#difference", label: "Why us" },
   { href: "#how-it-works", label: "How it works" },
@@ -275,13 +302,23 @@ export async function MarketingSite() {
       {/* The differentiator */}
       <Section id="difference">
         <Eyebrow>What makes us different</Eyebrow>
-        <h2 className="kw-headline-medium">
-          Everyone else starts with a sales call. You start with a signup form.
+        {/* Capped and balanced on purpose: at full container width this lands on
+            a single 1024px line with about 10px to spare, so it would wrap into
+            a one-word orphan on any slightly narrower desktop. Constrained, it
+            breaks between the two sentences, which is where the contrast is. */}
+        <h2 className="kw-headline-medium max-w-4xl text-balance">
+          Everyone else books you a demo. You get a number to put in your Instagram bio.
         </h2>
         <p className="kw-body-large mt-4 max-w-2xl" style={{ color: "var(--color-on-surface-variant)" }}>
-          Most companies want a demo, a scoping call and a quote before you ever hear the thing work. Here you
-          can have your agent picking up calls before that first meeting would even have been booked.
+          Not a trial and not a sandbox — a real phone number, yours, at the end of signing up. Put it behind
+          the call button on your Instagram, on your Google listing, on the board outside your shop. Anybody
+          who rings it gets straight answers about your services, your prices and your timings.
         </p>
+        <div className="mt-7 flex flex-wrap gap-2">
+          {PLACEMENTS.map((p) => (
+            <PlacementChip key={p.label} icon={p.icon} label={p.label} />
+          ))}
+        </div>
         <div className="mt-10 grid gap-6 md:grid-cols-2">
           <CompareColumn
             tone="them"
@@ -301,7 +338,7 @@ export async function MarketingSite() {
               "Sign up yourself, right now, on your phone",
               "Describe your business in your own words",
               "It reads your website and learns the rest",
-              "You end up with a working phone number",
+              "A number you can share the same day you sign up",
               `₹${price} a month, and you can stop any time`,
             ]}
           />
