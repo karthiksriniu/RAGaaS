@@ -24,6 +24,12 @@ export interface Tenant {
   voicePhoneNumber: string | null;
   /** Named voice preset id; null uses the default. See voicePresets.ts. */
   voicePreset: string | null;
+  /** E.164 number a caller is warm-transferred to when the agent cannot answer
+   * or the caller asks for a person. Per tenant: before this existed, every
+   * tenant's transfer rang one number from an environment variable. Null falls
+   * back to that variable, so an unset tenant keeps working rather than
+   * silently losing transfer. */
+  expertPhoneNumber: string | null;
   licenseExpiresAt: string | null;
   archivedAt: string | null;
   createdAt: string;
@@ -67,6 +73,7 @@ interface TenantRow {
   answer_config_md: string | null;
   voice_phone_number: string | null;
   voice_preset: string | null;
+  expert_phone_number: string | null;
   license_expires_at: string | null;
   archived_at: string | null;
   created_at: string;
@@ -88,6 +95,7 @@ function mapRow(row: TenantRow): Tenant {
     answerConfigMd: row.answer_config_md,
     voicePhoneNumber: row.voice_phone_number,
     voicePreset: row.voice_preset,
+    expertPhoneNumber: row.expert_phone_number,
     licenseExpiresAt: row.license_expires_at,
     archivedAt: row.archived_at,
     createdAt: row.created_at,
@@ -197,10 +205,13 @@ export async function createTenant(input: {
   twilioAccountSid?: string | null;
   twilioAuthToken?: string | null;
   answerConfigMd?: string | null;
+  /** Seeded at signup with the owner's own OTP-verified mobile, so a brand-new
+   * business can hand a caller to a person before it has configured anything. */
+  expertPhoneNumber?: string | null;
 }): Promise<Tenant> {
   const result = await pool.query<TenantRow>(
-    `INSERT INTO tenants (id, name, subdomain, license_expires_at, twilio_whatsapp_number, twilio_account_sid, twilio_auth_token, answer_config_md)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+    `INSERT INTO tenants (id, name, subdomain, license_expires_at, twilio_whatsapp_number, twilio_account_sid, twilio_auth_token, answer_config_md, expert_phone_number)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
      RETURNING *`,
     [
       input.id,
@@ -211,6 +222,7 @@ export async function createTenant(input: {
       input.twilioAccountSid ?? null,
       input.twilioAuthToken ?? null,
       input.answerConfigMd ?? null,
+      input.expertPhoneNumber ?? null,
     ]
   );
   return mapRow(result.rows[0]);
@@ -328,6 +340,27 @@ export async function updateTenantVoiceNumber(
   const result = await pool.query<TenantRow>(
     `UPDATE tenants SET voice_phone_number = $2 WHERE id = $1 AND archived_at IS NULL RETURNING *`,
     [id, voicePhoneNumber]
+  );
+  if (result.rows.length === 0) throw new TenantNotFoundError(id);
+  return mapRow(result.rows[0]);
+}
+
+/** The number a caller is handed to when the agent cannot help.
+ *
+ * Written only after the number has been proved by OTP - the route enforces
+ * that, not this function, which is also used by signup where the number was
+ * already verified minutes earlier.
+ *
+ * No cache and no notification anywhere: /api/voice/session reads the tenant
+ * fresh on every inbound call, so a number saved here is in force for the next
+ * call that arrives and needs no worker redeploy. */
+export async function updateTenantExpertNumber(
+  id: string,
+  expertPhoneNumber: string | null
+): Promise<Tenant> {
+  const result = await pool.query<TenantRow>(
+    `UPDATE tenants SET expert_phone_number = $2 WHERE id = $1 AND archived_at IS NULL RETURNING *`,
+    [id, expertPhoneNumber]
   );
   if (result.rows.length === 0) throw new TenantNotFoundError(id);
   return mapRow(result.rows[0]);

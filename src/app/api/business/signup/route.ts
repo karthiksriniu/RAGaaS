@@ -96,7 +96,7 @@ export async function POST(req: NextRequest) {
   // claim is the payer's own word, and a number costs real money every month.
   // A pooled number is still handed out either way, since that costs nothing
   // new; confirmOrder() buys one later if the pool was empty.
-  const provisioned = await provisionTenant(name, desc, site, licenseKind === "full");
+  const provisioned = await provisionTenant(name, desc, site, licenseKind === "full", normalized);
 
   // Licence and payment BEFORE anything slow or best-effort below. A tenant
   // that exists but is unlicensed answers no calls, so this is the step that

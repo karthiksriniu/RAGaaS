@@ -147,7 +147,9 @@ async function handleIncomingMessage(
 
     let detailText = `*${result.confidenceLabel}*\n\n${formatForWhatsApp(result.answer)}`;
     if (result.escalation.show) {
-      const expertPhone = process.env.EXPERT_PHONE_NUMBER;
+      // Same per-tenant number the voice transfer uses, so a business tells its
+      // customer to ring the same person on either channel.
+      const expertPhone = tenant.expertPhoneNumber || process.env.EXPERT_PHONE_NUMBER;
       detailText += `\n\n⚠️ This needs expert confirmation before you act. Call an agronomist now: ${expertPhone}`;
     }
 

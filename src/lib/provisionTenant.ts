@@ -398,7 +398,11 @@ export async function provisionTenant(
   websiteUrl?: string | null,
   /** Passed to acquireNumber - see there for why buying waits for a confirmed
    * payment while claiming from the pool does not. */
-  mayProcure = false
+  mayProcure = false,
+  /** The owner's mobile, already OTP-verified by signup. Becomes the tenant's
+   * first expert number so "put me through to a person" works on day one
+   * without the owner configuring anything. They can change it later. */
+  ownerMobile: string | null = null
 ): Promise<ProvisionResult> {
   const website = normalizeWebsite(websiteUrl);
   const tenantId = await deriveTenantId(businessName);
@@ -408,6 +412,7 @@ export async function provisionTenant(
     name: businessName,
     subdomain: tenantId,
     licenseExpiresAt: null,
+    expertPhoneNumber: ownerMobile,
   });
 
   // The description is stored, but ONLY as raw material for generating the

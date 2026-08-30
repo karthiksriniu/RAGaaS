@@ -58,6 +58,7 @@ export async function GET(req: NextRequest) {
       kbEnhancementStatus: desc.rows[0]?.kb_enhancement_status ?? null,
       kbEnhancementError: desc.rows[0]?.kb_enhancement_error ?? null,
       voicePhoneNumber: tenant.voicePhoneNumber,
+      expertPhoneNumber: tenant.expertPhoneNumber,
       answerConfigMd: tenant.answerConfigMd,
       // Resolved rather than raw: a tenant still holding a retired preset id
       // would otherwise match none of the options below and the dashboard would

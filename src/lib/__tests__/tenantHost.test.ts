@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach, vi } from "vitest";
-import { resolveTenantSlug, isRootDomainHost } from "../tenantHost";
+import { resolveTenantSlug, isRootDomainHost, tenantChatUrl } from "../tenantHost";
 
 const ORIGINAL_ENV = { ...process.env };
 
@@ -106,5 +106,34 @@ describe("isRootDomainHost", () => {
 
   it("is false when TENANT_ROOT_DOMAIN is unset entirely", () => {
     expect(isRootDomainHost("mybizcare.com")).toBe(false);
+  });
+});
+
+describe("tenantChatUrl", () => {
+  beforeEach(resetEnv);
+  afterEach(resetEnv);
+
+  it("hangs the tenant off the configured root domain", () => {
+    process.env.TENANT_ROOT_DOMAIN = "mybizcare.com";
+    expect(tenantChatUrl("acme")).toBe("https://acme.mybizcare.com");
+  });
+
+  it("uses the staging root on staging, not the production one", () => {
+    // The whole reason this is composed server-side: the two environments
+    // genuinely differ, and a browser guessing from its own location would get
+    // staging right by accident.
+    process.env.TENANT_ROOT_DOMAIN = "staging.mybizcare.com";
+    expect(tenantChatUrl("acme")).toBe("https://acme.staging.mybizcare.com");
+  });
+
+  it("returns null when no root domain is configured", () => {
+    // The dashboard hides the card on null rather than rendering an address
+    // that would never answer.
+    expect(tenantChatUrl("acme")).toBeNull();
+  });
+
+  it("returns null for a tenant with no subdomain", () => {
+    process.env.TENANT_ROOT_DOMAIN = "mybizcare.com";
+    expect(tenantChatUrl("")).toBeNull();
   });
 });

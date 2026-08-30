@@ -48,8 +48,9 @@ export async function POST(req: NextRequest) {
       );
     }
 
+    let tenant;
     try {
-      await assertTenantLicensed(tenantId);
+      tenant = await assertTenantLicensed(tenantId);
     } catch (err) {
       if (err instanceof TenantNotFoundError || err instanceof TenantExpiredError) {
         return NextResponse.json({ error: err.message }, { status: 403 });
@@ -58,7 +59,10 @@ export async function POST(req: NextRequest) {
     }
 
     const baseUrl = process.env.APP_BASE_URL;
-    const expertPhone = process.env.EXPERT_PHONE_NUMBER;
+    // The tenant's own expert, falling back to the platform-wide number. Before
+    // the per-tenant column existed this was the env var alone, which meant one
+    // business's caller was put through to a different business's owner.
+    const expertPhone = tenant.expertPhoneNumber || process.env.EXPERT_PHONE_NUMBER;
     const twilioNumber = process.env.TWILIO_PHONE_NUMBER;
     if (!baseUrl || !expertPhone || !twilioNumber) {
       return NextResponse.json(

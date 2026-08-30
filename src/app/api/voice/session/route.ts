@@ -84,5 +84,10 @@ export async function POST(req: NextRequest) {
     greeting: buildVoiceGreeting(tenant.name),
     instructions: buildVoiceInstructions(tenant.name, tenant.answerConfigMd),
     voice: { speaker: voice.speaker, pace: voice.pace, temperature: voice.temperature },
+    // Read fresh here on every inbound call, exactly like the voice settings
+    // above, which is what makes a number saved in the dashboard apply to the
+    // very next call with no worker redeploy. Null means "fall back to the
+    // worker's EXPERT_PHONE_NUMBER" rather than "transfer is off".
+    expertPhoneNumber: tenant.expertPhoneNumber,
   });
 }

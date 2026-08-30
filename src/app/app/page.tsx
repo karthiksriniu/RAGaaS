@@ -11,6 +11,7 @@ import { IconButton } from "@/components/kiowa/IconButton";
 import { ProgressIndicator } from "@/components/kiowa/ProgressIndicator";
 import { Logo } from "@/components/Logo";
 import { ShareableValue } from "@/components/ShareableValue";
+import { ExpertNumberField } from "@/components/ExpertNumberField";
 import { PLAN_FEATURES, UpiPayment, type PaymentInstructions } from "@/components/UpiPayment";
 
 type Section = "agents" | "settings" | "knowledge" | "config";
@@ -25,6 +26,8 @@ interface Me {
   description: string | null;
   website: string | null;
   voicePhoneNumber: string | null;
+  /** Where callers are transferred when the agent cannot help. */
+  expertPhoneNumber: string | null;
   answerConfigMd: string | null;
   voicePreset: string;
   voicePresets: { id: string; label: string; description: string }[];
@@ -387,6 +390,14 @@ export default function BusinessDashboard() {
                       <p className="kw-body-small" style={{ color: "var(--color-on-surface-variant)" }}>{f.hint}</p>
                     </div>
                   ))}
+
+                  <ExpertNumberField
+                    current={me?.expertPhoneNumber ?? null}
+                    // Patch local state rather than refetching: the server is
+                    // the one that just told us what it saved, and a reload
+                    // here would flash the whole Settings pane.
+                    onSaved={(n) => setMe((prev) => (prev ? { ...prev, expertPhoneNumber: n } : prev))}
+                  />
                 </div>
               </Card>
             </>

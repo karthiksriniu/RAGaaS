@@ -107,11 +107,18 @@ class TenantContext:
     """Everything about the tenant whose number was dialed."""
 
     def __init__(self, tenant_id: str, business_name: str, greeting: str, instructions: str,
-                 voice: dict | None = None):
+                 voice: dict | None = None, expert_phone_number: str | None = None):
         self.tenant_id = tenant_id
         self.business_name = business_name
         self.greeting = greeting
         self.instructions = instructions
+
+        # Who this tenant's callers are handed to. Resolved once per call, here,
+        # so the transfer tool has a single value to use and the fallback is
+        # visible in one place: EXPERT_PHONE_NUMBER is the platform-wide number
+        # this used to ALWAYS be, and is now only reached by a tenant that has
+        # not set its own.
+        self.expert_phone_number: str = expert_phone_number or EXPERT_PHONE_NUMBER
 
         # Speaker and delivery come from the tenant's chosen preset, resolved
         # server-side. Defaults here only cover an older app deployment that
@@ -208,6 +215,7 @@ async def _fetch_tenant(http: aiohttp.ClientSession, dialed: str) -> TenantConte
         greeting=data["greeting"],
         instructions=data["instructions"],
         voice=data.get("voice"),
+        expert_phone_number=data.get("expertPhoneNumber"),
     )
 
 
@@ -446,8 +454,13 @@ class MyBizCareAgent(Agent):
         Args:
             reason: A one-sentence summary of what the caller needs, for the expert.
         """
-        if not EXPERT_PHONE_NUMBER:
-            logger.error("transfer requested but EXPERT_PHONE_NUMBER is unset")
+        expert = self._tenant.expert_phone_number
+        if not expert:
+            logger.error(
+                "transfer requested but tenant %s has no expert number and "
+                "EXPERT_PHONE_NUMBER is unset",
+                self._tenant.tenant_id,
+            )
             return "Transfer is unavailable. Apologise and offer to take a callback number instead."
 
         # Beta namespace — see the pin in requirements.txt. Imported here so a
@@ -456,10 +469,11 @@ class MyBizCareAgent(Agent):
         from livekit.agents.beta.workflows import WarmTransferTask
         from livekit.protocol.sip import SIPOutboundConfig
 
-        logger.info("warm transfer requested (tenant=%s): %s", self._tenant.tenant_id, reason)
+        logger.info("warm transfer requested (tenant=%s -> %s): %s",
+                    self._tenant.tenant_id, expert, reason)
         try:
             await WarmTransferTask(
-                sip_call_to=EXPERT_PHONE_NUMBER,
+                sip_call_to=expert,
                 sip_connection=SIPOutboundConfig(
                     # .get() so a deployment without transfer configured fails
                     # this one tool gracefully rather than crashing the call.
