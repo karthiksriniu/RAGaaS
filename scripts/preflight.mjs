@@ -152,6 +152,37 @@ async function checkDatabase() {
     if (p.total === 0) warn("phone number pool is EMPTY - signups will complete with no number assigned");
     else info(`phone numbers: ${p.total} total, ${p.free} free, ${p.claimed} claimed`);
 
+    // The one that matters: somebody paid, we took the money, and they have no
+    // phone line. Checked as an OUTCOME rather than by inspecting configuration
+    // because this is the only form of the question preflight can answer
+    // honestly - it reads .env.local on whoever's machine runs it, not the
+    // environment variables of the deployment being checked, so a
+    // NUMBER_LIVE_PROCUREMENT set correctly on Vercel and absent locally would
+    // read as broken, and the reverse would read as fine.
+    //
+    // This exact state sat unnoticed in production: pool empty, live
+    // procurement off, and the buy path additionally unable to see Vobiz's
+    // inventory at all - so the business was shown "your number is being
+    // assigned" indefinitely with a confirmed payment behind it.
+    const owed = await client.query(
+      `select t.id, t.name
+         from tenants t
+         join payment_orders o on o.tenant_id = t.id and o.status = 'confirmed'
+        where t.voice_phone_number is null
+          and t.archived_at is null
+        group by t.id, t.name
+        order by t.id`
+    );
+    if (owed.rows.length === 0) {
+      pass("every tenant with a confirmed payment has a phone number");
+    } else {
+      fail(
+        `${owed.rows.length} tenant(s) PAID AND CONFIRMED but hold no number: ` +
+          `${owed.rows.map((r) => `"${r.id}"`).join(", ")} - they see "being assigned" forever. ` +
+          `Assign from /admin/numbers, or check NUMBER_LIVE_PROCUREMENT and LIVEKIT_SIP_URI on the deployment.`
+      );
+    }
+
     // Both of these are things migration 004 was supposed to have finished.
     const stale = await client.query(
       `select count(*)::int as n from tenants where answer_config_md ilike '%About this business%'`
@@ -229,9 +260,46 @@ async function checkDeployment() {
   }
 }
 
+/** The two variables that decide whether a paid signup gets a number bought
+ * for it. Both are read only by server code, appear in no other script, and
+ * were undocumented until a confirmed payment in production produced no number
+ * and no explanation - so listing them here is half the point of this section.
+ *
+ * SCOPE, and it matters: this reads the environment of whoever runs the
+ * script, NOT the environment of the deployment named by --url. Nothing here
+ * can prove what Vercel has set. Treated as warnings for that reason; the
+ * authoritative check is the paid-but-numberless query above, which reads the
+ * deployment's own database and fails hard. */
+function checkNumberProvisioning() {
+  section("Number provisioning  (this shell's environment, NOT the deployment's)");
+
+  if (process.env.NUMBER_LIVE_PROCUREMENT === "true") {
+    pass('NUMBER_LIVE_PROCUREMENT="true" - a confirmed payment buys a number when the pool is empty');
+  } else {
+    warn(
+      'NUMBER_LIVE_PROCUREMENT is not "true" - no number will ever be bought. ' +
+        "With an empty pool, a confirmed payment leaves the business with no phone line."
+    );
+  }
+
+  if (process.env.LIVEKIT_SIP_URI) {
+    // Cannot be verified from here, and getting it wrong is silent and
+    // expensive: the trunk is created once, per environment, pointing wherever
+    // this says. A staging URI on production means paying customers' calls are
+    // answered by the staging worker off the staging knowledge base.
+    info(`LIVEKIT_SIP_URI=${process.env.LIVEKIT_SIP_URI} - confirm this is the RIGHT environment's`);
+  } else {
+    warn(
+      "LIVEKIT_SIP_URI is unset - provisionNumber() throws before buying anything, " +
+        "so procurement fails even with NUMBER_LIVE_PROCUREMENT on."
+    );
+  }
+}
+
 console.log("\n\x1b[1mMyBizCare preflight\x1b[0m");
 await checkDatabase();
 await checkDeployment();
+checkNumberProvisioning();
 
 section("Result");
 if (failures) {

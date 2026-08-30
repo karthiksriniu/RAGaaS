@@ -250,7 +250,18 @@ export async function acquireNumber(
     );
     return null;
   }
-  if (!liveProcurementEnabled()) return null;
+  if (!liveProcurementEnabled()) {
+    // Was a bare `return null`. The caller then logs only that the tenant
+    // "could not be given a number", which reads as a carrier failure when in
+    // fact nothing was ever attempted - and NUMBER_LIVE_PROCUREMENT appears
+    // nowhere else, so there is no way to tell the two apart from the outside.
+    console.error(
+      `[number-procure] ${tenantId} has a confirmed payment and the pool is empty, but ` +
+        `NUMBER_LIVE_PROCUREMENT is not "true" - no number will be bought. Set it on this ` +
+        `deployment to buy automatically, or assign one from /admin/numbers.`
+    );
+    return null;
+  }
 
   try {
     return await procureNumber(tenantId);
