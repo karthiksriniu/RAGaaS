@@ -46,6 +46,43 @@ export function isLiveKitConfigured(): boolean {
   return !!(process.env.LIVEKIT_URL && process.env.LIVEKIT_API_KEY && process.env.LIVEKIT_API_SECRET);
 }
 
+export interface InboundTrunkSummary {
+  sipTrunkId: string;
+  name: string;
+  numbers: string[];
+}
+
+export type TrunkPlan =
+  | { action: "none"; trunkId: string }
+  | { action: "add"; trunkId: string }
+  | { action: "create" };
+
+/** What to do to make LiveKit answer for `e164`, given the trunks that exist.
+ *
+ * Split out and exported so the decision is unit-testable without a LiveKit
+ * project. The ordering is the whole point:
+ *
+ *  1. ANY trunk already carrying the number wins, whatever it is called. A
+ *     trunk created by hand in the console has a different name, and creating
+ *     a second one carrying the same number is rejected outright by LiveKit -
+ *     so a name-only match turned "already working" into a hard error.
+ *  2. Otherwise our own named trunk gets the number added to it.
+ *  3. Otherwise there is nothing to extend, so create it.
+ */
+export function planTrunkUpdate(
+  trunks: InboundTrunkSummary[],
+  ourName: string,
+  e164: string
+): TrunkPlan {
+  const carrying = trunks.find((t) => t.numbers.includes(e164));
+  if (carrying) return { action: "none", trunkId: carrying.sipTrunkId };
+
+  const ours = trunks.find((t) => t.name === ourName);
+  if (ours) return { action: "add", trunkId: ours.sipTrunkId };
+
+  return { action: "create" };
+}
+
 /** Makes LiveKit accept inbound calls for `e164`, creating the trunk and its
  * dispatch rule the first time.
  *
@@ -60,7 +97,57 @@ export async function allowNumberOnInboundTrunk(e164: string): Promise<void> {
   const name = trunkName();
 
   const trunks = await sip.listSipInboundTrunk();
-  const existing = trunks.find((t) => t.name === name);
+  const plan = planTrunkUpdate(
+    trunks.map((t) => ({ sipTrunkId: t.sipTrunkId, name: t.name, numbers: t.numbers })),
+    name,
+    e164
+  );
+
+  // Already answered for by SOME trunk - not necessarily ours. LiveKit refuses
+  // to create a second trunk carrying a number another one already has, so
+  // matching on name alone made this throw for a number that was in fact
+  // already accepted:
+  //   Conflicting inbound SIP Trunks: "<new>" and "ST_...", using the same
+  //   number(s) ["+91..."] without AllowedNumbers set
+  // A trunk someone made by hand in the console is the normal way to get here.
+  if (plan.action === "none") {
+    // Accepting the call is only half of answering it. A trunk with no dispatch
+    // rule takes the call and has nowhere to put it, and no agent is ever
+    // summoned - which looks, from a phone, exactly like the number being
+    // broken. Worth a loud line, because a trunk made by hand in the console is
+    // the case that most often lacks one.
+    const rules = await sip.listSipDispatchRule();
+    const forTrunk = rules.filter((r) => r.trunkIds.includes(plan.trunkId));
+    if (forTrunk.length > 0) {
+      // WHICH agent, not just whether a rule exists. agent_name has to match
+      // what the worker registers as, exactly (see voice-worker/agent.py) - a
+      // rule naming anything else summons nobody, and the caller hears ringing
+      // and then silence, which is indistinguishable from no rule at all.
+      const agents = forTrunk.flatMap((r) =>
+        (r.roomConfig?.agents ?? []).map((a) => a.agentName || "(unnamed)")
+      );
+      const expected = "mybizcare-voice";
+      if (agents.includes(expected)) {
+        console.log(
+          `[livekit-sip] ${e164} is already on trunk ${plan.trunkId}, dispatching "${expected}" - nothing to do`
+        );
+      } else {
+        console.error(
+          `[livekit-sip] ${e164} is on trunk ${plan.trunkId} and its dispatch rule summons ` +
+            `${agents.length ? agents.map((a) => `"${a}"`).join(", ") : "NO AGENT"} - but the worker ` +
+            `registers as "${expected}". Calls will ring and then sit in an empty room.`
+        );
+      }
+    } else {
+      console.error(
+        `[livekit-sip] ${e164} is on trunk ${plan.trunkId} but NO DISPATCH RULE points at that trunk - ` +
+          `calls will not reach an agent. Add one dispatching agent "mybizcare-voice".`
+      );
+    }
+    return;
+  }
+
+  const existing = plan.action === "add" ? { sipTrunkId: plan.trunkId } : null;
 
   if (!existing) {
     const trunk = await sip.createSipInboundTrunk(name, [e164], {
@@ -81,8 +168,6 @@ export async function allowNumberOnInboundTrunk(e164: string): Promise<void> {
     console.log(`[livekit-sip] created trunk ${trunk.sipTrunkId} accepting ${e164}`);
     return;
   }
-
-  if (existing.numbers.includes(e164)) return;
 
   // `add` rather than writing the whole list back: two signups completing at
   // once would otherwise each read the list, append their own number, and the

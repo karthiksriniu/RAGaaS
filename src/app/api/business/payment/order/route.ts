@@ -1,6 +1,6 @@
 import { NextRequest, NextResponse } from "next/server";
 import { pool } from "@/lib/db";
-import { businessTenantId, normalizeMobile } from "@/lib/businessAuth";
+import { businessTenantId, hasVerifiedRecently, normalizeMobile } from "@/lib/businessAuth";
 import { checkRateLimit } from "@/lib/rateLimit";
 import {
   confirmOrder,
@@ -17,9 +17,9 @@ export const runtime = "nodejs";
  * Two callers, authenticated two different ways, because at signup there is no
  * session yet - the mobile has only been OTP-verified:
  *
- *  - signup:  the mobile must have no surviving otp_challenges row (the same
- *             proof-of-verification /api/business/signup relies on) and must
- *             not already own an account.
+ *  - signup:  the mobile must carry a recent verification receipt (the same
+ *             proof /api/business/signup relies on) and must not already own
+ *             an account.
  *  - renewal: an ordinary business session; the tenant and the mobile both come
  *             from it, never from the request body.
  *
@@ -47,8 +47,7 @@ export async function POST(req: NextRequest) {
     if (!normalized) return NextResponse.json({ error: "Valid mobile number required" }, { status: 400 });
     mobile = normalized;
 
-    const pending = await pool.query("SELECT 1 FROM otp_challenges WHERE mobile = $1", [mobile]);
-    if (pending.rows.length > 0) {
+    if (!(await hasVerifiedRecently(mobile))) {
       return NextResponse.json({ error: "Verify your mobile number first" }, { status: 403 });
     }
     const existing = await pool.query("SELECT 1 FROM business_accounts WHERE mobile = $1", [mobile]);

@@ -146,6 +146,22 @@ fly logs        # expect "registered worker"
 `MYBIZCARE_BASE_URL` is in `fly.toml` rather than a secret — it is a public URL, and keeping it
 in config makes it obvious which environment a deployment points at.
 
+### One worker per service
+
+The worker binds a health-check port (8081 by default) that nothing actually
+consumes. Two workers sharing a network namespace - most easily two containers
+in ONE Lightsail container service, such as staging and production deployed
+together - collide on it. The loser crash-loops with
+
+```
+OSError: [Errno 98] error while attempting to bind on address ('::', 8081): address already in use
+worker failed -> draining worker -> id: "unregistered"
+```
+
+and never registers, so calls ring and nobody answers while the container still
+reports itself running. Give each environment its own container service; if you
+must share one, set `WORKER_HTTP_PORT` differently per container.
+
 **Do NOT set `DEV_FALLBACK_TENANT_NUMBER` in production.** It exists only for `agent.py console`,
 which has no SIP participant. In a real deployment it would make the worker answer as a tenant
 nobody dialled.

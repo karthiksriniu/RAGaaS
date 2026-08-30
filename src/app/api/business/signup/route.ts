@@ -3,7 +3,9 @@ import { after } from "next/server";
 import { pool } from "@/lib/db";
 import {
   BUSINESS_SESSION_COOKIE,
+  consumeVerification,
   createBusinessSession,
+  hasVerifiedRecently,
   newAccountId,
   normalizeMobile,
 } from "@/lib/businessAuth";
@@ -47,10 +49,11 @@ export async function POST(req: NextRequest) {
     return NextResponse.json({ error: "Too many signup attempts. Try again later." }, { status: 429 });
   }
 
-  // Proof of verification: verifyOtp deletes the challenge on success, so a
-  // surviving row means this number never completed the code step.
-  const pending = await pool.query("SELECT 1 FROM otp_challenges WHERE mobile = $1", [normalized]);
-  if (pending.rows.length > 0) {
+  // Proof of verification, positively: a receipt from verifyOtp, still inside
+  // its window. This used to test that NO challenge row survived - which was
+  // equally true of a mobile that had never requested a code, so signup could
+  // be driven against someone else's number by skipping the OTP step.
+  if (!(await hasVerifiedRecently(normalized))) {
     return NextResponse.json({ error: "Verify your mobile number first" }, { status: 403 });
   }
 
@@ -89,7 +92,11 @@ export async function POST(req: NextRequest) {
     return res;
   }
 
-  const provisioned = await provisionTenant(name, desc, site);
+  // Buying a number is gated on a CONFIRMED payment, not a claimed one - a
+  // claim is the payer's own word, and a number costs real money every month.
+  // A pooled number is still handed out either way, since that costs nothing
+  // new; confirmOrder() buys one later if the pool was empty.
+  const provisioned = await provisionTenant(name, desc, site, licenseKind === "full");
 
   // Licence and payment BEFORE anything slow or best-effort below. A tenant
   // that exists but is unlicensed answers no calls, so this is the step that
@@ -125,6 +132,8 @@ export async function POST(req: NextRequest) {
     "INSERT INTO business_accounts (id, mobile, tenant_id) VALUES ($1, $2, $3)",
     [newAccountId(), normalized, provisioned.tenantId]
   );
+  // One verification, one account.
+  await consumeVerification(normalized);
 
   const res = NextResponse.json({
     ok: true,

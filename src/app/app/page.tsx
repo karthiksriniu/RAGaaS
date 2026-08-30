@@ -284,7 +284,15 @@ export default function BusinessDashboard() {
                   {[
                     { label: "Mobile number", value: me?.mobile ?? "—", hint: "Used to sign in. Cannot be changed." },
                     { label: "Account name", value: me?.tenantId ?? "—", hint: "Permanent — it identifies your agent and your data." },
-                    { label: "Your phone number", value: me?.voicePhoneNumber ?? "Being assigned", hint: "What your customers dial." },
+                    {
+                      label: "Your phone number",
+                      value: me?.voicePhoneNumber ?? "Being assigned",
+                      hint: me?.voicePhoneNumber
+                        ? "What your customers dial."
+                        : me?.licenseState === "provisional"
+                          ? "Assigned as soon as we confirm your payment."
+                          : "Being assigned — we'll be in touch shortly.",
+                    },
                     {
                       label: "Plan",
                       value: `\u20b9${me?.planPriceInr ?? 999}/month`,

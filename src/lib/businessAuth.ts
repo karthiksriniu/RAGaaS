@@ -107,7 +107,10 @@ export async function sendOtp(mobile: string): Promise<SentOtp> {
      VALUES ($1, $2, 0, $3)
      ON CONFLICT (mobile) DO UPDATE
        SET code_hash = excluded.code_hash, attempts = 0,
-           expires_at = excluded.expires_at, created_at = now()`,
+           expires_at = excluded.expires_at, created_at = now(),
+           -- Asking for a new code revokes the previous receipt: whoever holds
+           -- the old one must prove themselves again with the new code.
+           verified_at = NULL`,
     [mobile, code ? hashCode(mobile, code) : randomBytes(32).toString("hex"), expiresAt]
   );
   // Opportunistic sweep - keeps the table from accumulating abandoned challenges.
@@ -151,9 +154,49 @@ export async function verifyOtp(mobile: string, code: string): Promise<OtpResult
     await pool.query("UPDATE otp_challenges SET attempts = attempts + 1 WHERE mobile = $1", [mobile]);
     return "invalid";
   }
-  // Single-use: consumed on success so a replayed code cannot log in again.
-  await pool.query("DELETE FROM otp_challenges WHERE mobile = $1", [mobile]);
+  // Single-use, and now also a RECEIPT. The row used to be deleted here, which
+  // made "verified" indistinguishable from "never asked for a code" - see
+  // hasVerifiedRecently below. Overwriting code_hash with random bytes is what
+  // keeps it single-use: the code itself can never match again, on either
+  // channel, so a replayed code cannot log in.
+  await pool.query(
+    `UPDATE otp_challenges
+        SET verified_at = now(), code_hash = $2, attempts = 0
+      WHERE mobile = $1`,
+    [mobile, randomBytes(32).toString("hex")]
+  );
   return "ok";
+}
+
+/** How long a completed verification stays good for. Long enough to read a
+ * plan, find a phone and pay; short enough that a receipt is not still valid
+ * tomorrow. */
+const VERIFICATION_TTL_MS = 1000 * 60 * 30; // 30 minutes
+
+/** Did this mobile actually complete the code step, recently?
+ *
+ * This replaces "no otp_challenges row survives, so they must have verified".
+ * That test passed for a verified number AND for a number that had never
+ * requested a code at all - so signup, and later the payment endpoints, could
+ * be driven against someone else's mobile by simply skipping the OTP step.
+ *
+ * Positive evidence instead: a row that carries verified_at, still inside its
+ * window. */
+export async function hasVerifiedRecently(mobile: string): Promise<boolean> {
+  const res = await pool.query(
+    `SELECT 1 FROM otp_challenges
+      WHERE mobile = $1
+        AND verified_at IS NOT NULL
+        AND verified_at > now() - $2::interval`,
+    [mobile, `${Math.round(VERIFICATION_TTL_MS / 1000)} seconds`]
+  );
+  return res.rows.length > 0;
+}
+
+/** Spends the receipt, so one verification creates one account. Called once
+ * signup has actually committed. */
+export async function consumeVerification(mobile: string): Promise<void> {
+  await pool.query("DELETE FROM otp_challenges WHERE mobile = $1", [mobile]);
 }
 
 /** "tenantId.expiry.signature" - the tenant is signed, so editing the cookie to

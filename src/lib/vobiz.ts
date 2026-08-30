@@ -127,6 +127,34 @@ async function vobiz<T>(
   return (text ? JSON.parse(text) : {}) as T;
 }
 
+/** The array out of a Vobiz list response, whatever it chose to call it.
+ *
+ * Vobiz is not consistent, and reading only the documented key is what broke
+ * automatic procurement in production. Confirmed against the live account:
+ *   /inventory/numbers -> { items, page, per_page, total }
+ *   /numbers           -> { items, page, per_page, total }
+ *   /trunks            -> { meta, objects }
+ * while openapi.json documents `data`. listInventoryNumbers therefore returned
+ * [] against an inventory of TWENTY buyable Indian numbers, procureNumber
+ * concluded there was nothing to buy, and a business whose payment had been
+ * confirmed was left permanently on "your number is being assigned" - with the
+ * only trace a log line blaming Vobiz for an empty inventory.
+ *
+ * Taking whichever key actually holds an array is deliberate over pinning to
+ * `items`: this API has now surprised us twice (see the origination-uri defect
+ * above), and a list endpoint that quietly returns nothing is the single most
+ * expensive failure mode on this path - it spends no money, raises no error,
+ * and looks exactly like "there was nothing to return". */
+function listOf<T>(payload: unknown): T[] {
+  if (Array.isArray(payload)) return payload as T[];
+  if (!payload || typeof payload !== "object") return [];
+  const obj = payload as Record<string, unknown>;
+  for (const key of ["items", "objects", "data", "numbers", "results"]) {
+    if (Array.isArray(obj[key])) return obj[key] as T[];
+  }
+  return [];
+}
+
 export interface InventoryNumber {
   e164: string;
   country?: string;
@@ -144,25 +172,20 @@ export async function listInventoryNumbers(
   const cfg = credentials();
   const params = new URLSearchParams({ country, per_page: String(perPage) });
   if (search) params.set("search", search);
-  const data = await vobiz<{ data?: InventoryNumber[]; numbers?: InventoryNumber[] }>(
+  const data = await vobiz<unknown>(
     cfg,
     "GET",
     `/Account/${cfg.authId}/inventory/numbers?${params}`
   );
-  // The spec's list responses aren't consistently keyed, so accept either
-  // shape rather than silently returning nothing on a schema change.
-  return data.data ?? data.numbers ?? [];
+  return listOf<InventoryNumber>(data);
 }
 
 /** Creates the shared inbound trunk pointing at LiveKit, or returns the
  * existing one. Idempotent by trunk NAME - safe to call on every signup. */
 async function ensureLiveKitTrunk(cfg: VobizConfig): Promise<string> {
-  const existing = await vobiz<{ data?: { uuid?: string; trunk_id?: string; name?: string }[] }>(
-    cfg,
-    "GET",
-    `/Account/${cfg.authId}/trunks`
-  );
-  const found = (existing.data ?? []).find((t) => t.name === trunkName());
+  const existing = await vobiz<unknown>(cfg, "GET", `/Account/${cfg.authId}/trunks`);
+  const trunks = listOf<{ uuid?: string; trunk_id?: string; name?: string }>(existing);
+  const found = trunks.find((t) => t.name === trunkName());
   if (found) return (found.uuid || found.trunk_id)!;
 
   // `uri`, NOT the documented `sip_uri` - see the defect note at the top of
@@ -222,12 +245,8 @@ export async function provisionNumber(e164: string): Promise<ProvisionedNumber> 
  * while the follow-up DB write failed can be spotted rather than orphaned. */
 export async function listOwnedNumbers(): Promise<{ e164: string }[]> {
   const cfg = credentials();
-  const data = await vobiz<{ data?: { e164: string }[]; numbers?: { e164: string }[] }>(
-    cfg,
-    "GET",
-    `/Account/${cfg.authId}/numbers`
-  );
-  return data.data ?? data.numbers ?? [];
+  const data = await vobiz<unknown>(cfg, "GET", `/Account/${cfg.authId}/numbers`);
+  return listOf<{ e164: string }>(data);
 }
 
 /** Places an outbound call that reads a verification code aloud.

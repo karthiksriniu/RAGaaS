@@ -112,14 +112,10 @@ class TenantContext:
         self.business_name = business_name
         self.greeting = greeting
         self.instructions = instructions
+
         # Speaker and delivery come from the tenant's chosen preset, resolved
         # server-side. Defaults here only cover an older app deployment that
         # doesn't send them yet.
-        # A knowledge-base lookup started from a partial transcript, so the
-        # ~0.7s round trip overlaps the caller still talking instead of being
-        # added on after they stop. Holds (query, task).
-        self._speculative: tuple[str, asyncio.Task[str]] | None = None
-
         v = voice or {}
         self.speaker: str = v.get("speaker") or "priya"
         self.pace: float = float(v.get("pace") or 0.95)
@@ -273,6 +269,19 @@ class MyBizCareAgent(Agent):
         )
         self._http = http
         self._tenant = tenant
+        # A knowledge-base lookup started from a partial transcript, so the
+        # ~0.7s round trip overlaps the caller still talking instead of being
+        # added on after they stop. Holds (query, task).
+        #
+        # MUST be initialised HERE, on the agent - speculate(),
+        # _cancel_speculative() and _retrieve_for_turn() are all methods of
+        # this class. It briefly lived on TenantContext instead, and because
+        # livekit's Agent defines no __getattr__, every access raised
+        # AttributeError: the proactive lookup was swallowed as "retrieval
+        # failed" and the search_knowledge_base tool returned its
+        # knowledge-base-unreachable branch, so the agent told every caller it
+        # could not access that information while retrieval was in fact fine.
+        self._speculative: tuple[str, asyncio.Task[str]] | None = None
 
     async def on_enter(self) -> None:
         self.session.say(self._tenant.greeting)
@@ -604,5 +613,20 @@ if __name__ == "__main__":
             # kills the job mid-call ("process is unresponsive" -> exit -10).
             # One spare is enough to keep answer latency low.
             num_idle_processes=1,
+            # The health-check listener. Nothing consumes it - this is a worker
+            # that dials OUT to LiveKit and serves no HTTP (see fly.toml) - but
+            # it still binds, and the bind is fatal when the port is taken:
+            #   OSError: [Errno 98] ... bind on address ('::', 8081) ... in use
+            #   worker failed -> draining worker -> id: "unregistered"
+            # which is a crash loop that never registers, so calls ring and
+            # nobody answers while the container reports itself healthy.
+            #
+            # That happens when two workers share a network namespace - the
+            # normal way being two containers in ONE Lightsail container
+            # service, e.g. staging and production deployed together. Prefer a
+            # service each; set WORKER_HTTP_PORT to give them different ports
+            # when you cannot. 0 picks a free port, which is safe here only
+            # because nothing checks this endpoint.
+            port=int(os.getenv("WORKER_HTTP_PORT", "8081")),
         )
     )
