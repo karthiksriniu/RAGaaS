@@ -12,7 +12,7 @@
 // multiply Vobiz objects for no benefit - routing to the right tenant happens
 // in our worker, from the dialed number, not in the carrier.
 //
-// KNOWN VOBIZ DEFECTS, both confirmed against a live trial account:
+// KNOWN VOBIZ DEFECTS, each confirmed against the live account:
 //  * /origination-uris documents the field as `sip_uri`, but the service reads
 //    `uri`. Posting `sip_uri` returns 201 and silently persists uri:"", so the
 //    trunk has no routing target and Vobiz refuses every inbound call with
@@ -20,6 +20,15 @@
 //  * /numbers/{e164}/assign returns 400 "access denied" on a trial account,
 //    so numbers cannot be bound to a trunk until the account is upgraded.
 //    provisionNumber() will fail at that step until then.
+//  * The origination URI must be a BARE HOST. The spec's own example is
+//    "sip:sbc.example.com", but a value carrying the scheme is accepted,
+//    stored, reported active - and then every inbound call is refused with
+//    hangup_disposition=send_refuse. See normalizeSipHost() below.
+//  * List responses are keyed `items` (numbers) or `objects` (trunks), never
+//    the documented `data`. See listOf() below.
+//  * The origination-URI LIST lives at /trunks/origination-uris, while CREATE
+//    is at /origination-uris. Calling the latter with GET returns 400
+//    "account ID required in path", which is not what is wrong with it.
 
 import { normalizeMobile } from "@/lib/mobile";
 
@@ -89,6 +98,29 @@ function credentials(): VobizCredentials {
   return { authId, authToken };
 }
 
+/** Vobiz wants a BARE HOST as the origination URI - "xxxx.sip.livekit.cloud",
+ * not "sip:xxxx.sip.livekit.cloud".
+ *
+ * Its own OpenAPI example says `sip_uri: "sip:sbc.example.com"`, and the
+ * comment that used to sit in config() repeated that form. It is wrong, and
+ * wrong in the worst way: Vobiz ACCEPTS the prefixed value, stores it, reports
+ * the trunk as active, and then refuses every inbound call with
+ * hangup_disposition=send_refuse - no failure code, no error anywhere, and a
+ * CDR that looks like a normal hangup. From a phone it is indistinguishable
+ * from the number not existing ("the number you have dialled is invalid").
+ *
+ * Confirmed by comparing the two live trunks: staging routes to
+ * "46zc4a8v6zd.sip.livekit.cloud" and answers calls; production was created
+ * from an env value carrying the scheme and answered none. That one prefix was
+ * the only difference between them.
+ *
+ * Normalised here rather than in the environment so BOTH spellings work and no
+ * future deployment can be broken by copying the URI out of the LiveKit
+ * console, which shows it with the scheme. */
+export function normalizeSipHost(raw: string): string {
+  return raw.trim().replace(/^sips?:/i, "").replace(/^\/\//, "");
+}
+
 /** Separate from credentials() on purpose. Requiring the inbound SIP URI for
  * every Vobiz call meant placing an OUTBOUND verification call - which has
  * nothing to do with where inbound calls are handed over - failed on any
@@ -97,9 +129,11 @@ function credentials(): VobizCredentials {
  * had no way of knowing about, and no LiveKit involvement at all. */
 function config(): VobizConfig {
   const creds = credentials();
-  // The SIP URI LiveKit gives you for the inbound trunk, e.g.
-  // sip:xxxx.sip.livekit.cloud - this is where Vobiz hands calls over.
-  const livekitSipUri = process.env.LIVEKIT_SIP_URI;
+  // Where Vobiz hands inbound calls over. Set it with or without the scheme -
+  // see normalizeSipHost above for why only one of those actually routes.
+  const raw = process.env.LIVEKIT_SIP_URI;
+  if (!raw) throw new VobizNotConfiguredError();
+  const livekitSipUri = normalizeSipHost(raw);
   if (!livekitSipUri) throw new VobizNotConfiguredError();
   return { ...creds, livekitSipUri };
 }
