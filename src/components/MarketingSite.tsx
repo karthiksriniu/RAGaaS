@@ -302,14 +302,14 @@ export async function MarketingSite() {
       {/* The differentiator */}
       <Section id="difference">
         <Eyebrow>What makes us different</Eyebrow>
-        {/* Capped and balanced on purpose: at full container width this lands on
-            a single 1024px line with about 10px to spare, so it would wrap into
-            a one-word orphan on any slightly narrower desktop. Constrained, it
-            breaks between the two sentences, which is where the contrast is. */}
-        <h2 className="kw-headline-medium max-w-4xl text-balance">
+        {/* text-pretty, NOT text-balance. Balance equalises the two lines, which
+            on a wide screen left the headline sitting in about half the section
+            with a dead gutter beside it. Pretty only refuses to strand the last
+            word, so the line fills the container and still never orphans. */}
+        <h2 className="kw-headline-medium text-pretty">
           Everyone else books you a demo. You get a number to put in your Instagram bio.
         </h2>
-        <p className="kw-body-large mt-4 max-w-2xl" style={{ color: "var(--color-on-surface-variant)" }}>
+        <p className="kw-body-large mt-4 max-w-3xl" style={{ color: "var(--color-on-surface-variant)" }}>
           Not a trial and not a sandbox — a real phone number, yours, at the end of signing up. Put it behind
           the call button on your Instagram, on your Google listing, on the board outside your shop. Anybody
           who rings it gets straight answers about your services, your prices and your timings.
@@ -508,7 +508,7 @@ export async function MarketingSite() {
       <Section>
         <Eyebrow>Beyond the phone</Eyebrow>
         <h2 className="kw-headline-medium">Teach it once. It answers everywhere.</h2>
-        <p className="kw-body-large mt-4 max-w-2xl" style={{ color: "var(--color-on-surface-variant)" }}>
+        <p className="kw-body-large mt-4 max-w-3xl" style={{ color: "var(--color-on-surface-variant)" }}>
           Everything your agent knows sits in one place. So the answer a customer gets on the phone is the
           same one they get on your web page or on WhatsApp — and when you change a price, it changes in all
           three at once.
@@ -573,7 +573,7 @@ export async function MarketingSite() {
       <Section id="pricing">
         <Eyebrow>Pricing</Eyebrow>
         <h2 className="kw-headline-medium">₹{price} a month. That is the whole price list.</h2>
-        <p className="kw-body-large mt-4 max-w-2xl" style={{ color: "var(--color-on-surface-variant)" }}>
+        <p className="kw-body-large mt-4 max-w-3xl" style={{ color: "var(--color-on-surface-variant)" }}>
           One plan, everything in it. No setup fee, no per-call charge, and nothing you have to ask us for a
           quote on.
         </p>
