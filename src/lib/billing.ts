@@ -230,6 +230,19 @@ export async function claimOrder(id: string, utr: string | null): Promise<Paymen
   if (res.rows.length === 0) return (await getOrder(id))!;
 
   const claimed = mapOrder(res.rows[0]);
+
+  // Exactly here, and nowhere else in this function: the two early returns
+  // above are a re-claim and a lost race, neither of which is a NEW thing for
+  // an admin to look at. Lazily imported so web-push is not pulled into every
+  // route that touches billing.ts, the same reason giveNumberIfOwed does it.
+  // Never throws and is time-bounded - see pushNotify.ts.
+  try {
+    const { notifyPaymentAwaitingConfirmation } = await import("@/lib/pushNotify");
+    await notifyPaymentAwaitingConfirmation(claimed);
+  } catch (err) {
+    console.error("[push] could not notify for claimed payment", claimed.id, err);
+  }
+
   if (claimed.tenantId) {
     const until = await grantLicense(claimed.tenantId, "provisional", new Date(claimed.claimedAt!));
     return recordLicensedUntil(claimed, until);

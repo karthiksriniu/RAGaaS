@@ -8,6 +8,7 @@ import { Card } from "@/components/kiowa/Card";
 import { TextField } from "@/components/kiowa/TextField";
 import { StatusPill } from "@/components/kiowa/StatusPill";
 import { ProgressIndicator } from "@/components/kiowa/ProgressIndicator";
+import { PaymentAlertsToggle } from "@/components/PaymentAlertsToggle";
 
 interface Billing {
   vpa: string;
@@ -209,6 +210,10 @@ export default function AdminBilling() {
           licence. Check {billing?.vpa} for the reference or UTR, then confirm — that gives them
           the full month, dated from when they paid.
         </p>
+
+        {/* Directly above the queue it is about, so the thing you switch on and
+            the thing it tells you about are never on different screens. */}
+        <PaymentAlertsToggle />
 
         {orders.length === 0 && (
           <p className="kw-body-medium" style={{ color: "var(--color-on-surface-variant)" }}>
