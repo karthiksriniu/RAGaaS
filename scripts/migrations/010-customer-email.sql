@@ -1,0 +1,21 @@
+-- 010: an email address, because Cashfree will not create a subscription
+-- without one.
+--
+-- Collected on the payment step rather than the details step (Karthik, 5 Sep):
+-- a receipt address is expected where someone is paying, and the details step
+-- is the one whose shortness the whole product is sold on.
+--
+-- Stored in BOTH places on purpose, and they mean different things:
+--
+--   payment_orders.customer_email  - what was sent to Cashfree for THIS order.
+--     A snapshot, exactly like the vpa and payee_name columns from 005: if the
+--     business later changes its address, the record of what that payment was
+--     made under must not silently rewrite itself.
+--
+--   business_accounts.email        - the business's current address, used to
+--     prefill a renewal and to reach a customer whose mandate has just failed.
+--
+-- Both nullable: every existing row predates the field, and the UPI fallback
+-- path never collects one.
+alter table payment_orders   add column if not exists customer_email text;
+alter table business_accounts add column if not exists email text;

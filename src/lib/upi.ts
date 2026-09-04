@@ -75,6 +75,29 @@ export const PROVISIONAL_DAYS = 3;
  * reference is not still floating about the next day. */
 export const QR_TTL_MINUTES = 45;
 
+export type PaymentProvider = "cashfree" | "upi" | "simulated";
+
+/** Which payment path a new order takes.
+ *
+ * Three-way, replacing the old upiPaymentsEnabled() boolean, because there are
+ * now three real states rather than two: the gateway, the legacy direct-VPA QR
+ * kept as a fallback, and staging's simulated bypass that settles an order on
+ * the spot so signup stays testable without anyone paying.
+ *
+ * CASHFREE_PAYMENTS=on is what lets staging exercise the real sandbox instead
+ * of the bypass - the same shape of override as UPI_PAYMENTS, and the same
+ * reason: an environment must be able to opt into the real flow without being
+ * moved to production.
+ *
+ * upiPaymentsEnabled() is left exactly as it was and still governs the UPI
+ * path, so nothing that reads it today changes behaviour. */
+export function paymentProvider(): PaymentProvider {
+  if (process.env.CASHFREE_PAYMENTS === "on") return "cashfree";
+  if (process.env.CASHFREE_PAYMENTS === "off") return upiPaymentsEnabled() ? "upi" : "simulated";
+  // Unset: production uses the gateway, staging keeps its bypass.
+  return upiPaymentsEnabled() ? "cashfree" : "simulated";
+}
+
 export type OrderStatus = "pending" | "claimed" | "confirmed" | "rejected" | "expired";
 export type OrderPurpose = "signup" | "renewal";
 

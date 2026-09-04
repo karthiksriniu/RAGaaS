@@ -303,3 +303,159 @@ export function planKind(plan: CashfreePlan): "monthly" | "annual" | null {
   if (plan.plan_interval_type === "YEAR" && (plan.plan_intervals ?? 1) === 1) return "annual";
   return null;
 }
+
+// ---------------------------------------------------------------------------
+// Subscriptions
+// ---------------------------------------------------------------------------
+
+export type SubscriptionStatus =
+  | "INITIALIZED" | "ACTIVE" | "PAUSED" | "CANCELLED" | "COMPLETED";
+
+export interface CashfreeSubscription {
+  cf_subscription_id?: string;
+  subscription_id?: string;
+  subscription_status?: SubscriptionStatus;
+  /** What the AUTH call needs, and the only reason this response matters. */
+  subscription_session_id?: string;
+  subscription_first_charge_time?: string;
+  next_schedule_date?: string;
+}
+
+export interface SubscriptionPayResponse {
+  cf_payment_id?: string;
+  payment_id?: string;
+  subscription_id?: string;
+  payment_status?: string;
+  payment_type?: string;
+  /** link | collect | qrcode | post - how the customer is meant to be sent on. */
+  channel?: string;
+  action?: string;
+  /** Carries the URL (and for some channels a payload) the customer goes to. */
+  data?: Record<string, unknown> & { url?: string; payload?: Record<string, unknown> };
+}
+
+/** Cashfree wants a bare Indian mobile number, not E.164.
+ *
+ * NOT confirmed against a live call - our own numbers are stored as +91XXXXXXXXXX
+ * and this takes the last ten digits. If the sandbox disagrees it says so in the
+ * CashfreeApiError rather than failing silently, which is why this is a named
+ * function and not an inline slice. */
+export function toCashfreePhone(e164OrDigits: string): string {
+  const digits = (e164OrDigits || "").replace(/\D/g, "");
+  return digits.length > 10 ? digits.slice(-10) : digits;
+}
+
+export interface CreateSubscriptionInput {
+  /** Our own reference. The payment order id, so a Cashfree record can always
+   * be traced back to the order that created it. */
+  subscriptionId: string;
+  planId: string;
+  customerName: string;
+  customerEmail: string;
+  customerPhone: string;
+  /** The first cycle, in rupees. Collected at authorisation and NOT refunded -
+   * this is the whole mechanism by which one customer action both pays and
+   * mandates. */
+  authorizationAmountInr: number;
+  returnUrl: string;
+  /** When the first PERIODIC charge runs.
+   *
+   * Must be one full period out, never "now": the authorisation above already
+   * collected cycle one, so a first charge scheduled immediately bills the
+   * customer twice in their first week. */
+  firstChargeAt: Date;
+}
+
+export async function createSubscription(
+  input: CreateSubscriptionInput
+): Promise<CashfreeSubscription> {
+  return cashfreeFetch<CashfreeSubscription>("/subscriptions", {
+    method: "POST",
+    body: {
+      subscription_id: input.subscriptionId,
+      customer_details: {
+        customer_name: input.customerName,
+        customer_email: input.customerEmail,
+        customer_phone: toCashfreePhone(input.customerPhone),
+      },
+      plan_details: { plan_id: input.planId },
+      authorization_details: {
+        authorization_amount: input.authorizationAmountInr,
+        // FALSE is load-bearing. True would refund the amount straight back and
+        // leave the customer mandated but unpaid, with a licensed tenant and no
+        // money taken for it.
+        authorization_amount_refund: false,
+        payment_methods: ["upi"],
+      },
+      subscription_meta: {
+        return_url: input.returnUrl,
+        notification_channel: ["SMS", "EMAIL"],
+      },
+      subscription_first_charge_time: input.firstChargeAt.toISOString(),
+    },
+  });
+}
+
+/** Starts the authorisation: one customer action that registers the mandate and
+ * takes the first cycle's money.
+ *
+ * `channel: "link"` asks Cashfree for a URL to send the customer to, rather
+ * than a collect request to a VPA we would have to ask for ourselves. NOT yet
+ * confirmed against a live call - like getPlan's path, it is exercised against
+ * the sandbox before anything depends on it. */
+export async function subscriptionAuthPay(input: {
+  subscriptionId: string;
+  paymentId: string;
+  subscriptionSessionId: string;
+}): Promise<SubscriptionPayResponse> {
+  return cashfreeFetch<SubscriptionPayResponse>("/subscriptions/pay", {
+    method: "POST",
+    body: {
+      subscription_id: input.subscriptionId,
+      payment_id: input.paymentId,
+      payment_type: "AUTH",
+      subscription_session_id: input.subscriptionSessionId,
+      payment_method: { upi: { channel: "link" } },
+    },
+  });
+}
+
+/** One full billing period after `from`.
+ *
+ * Calendar arithmetic via setMonth/setFullYear, not day counts, so 31 Jan + a
+ * month is 28 Feb rather than 3 March, matching what grantLicense does in
+ * Postgres. The two must agree or a licence and a charge drift apart. */
+export function onePeriodAfter(from: Date, plan: "monthly" | "annual"): Date {
+  const d = new Date(from.getTime());
+  const day = d.getDate();
+  if (plan === "annual") d.setFullYear(d.getFullYear() + 1);
+  else d.setMonth(d.getMonth() + 1);
+  // setMonth on the 31st of a 30-day month rolls into the next one; pull it
+  // back to the last day of the intended month.
+  if (d.getDate() !== day) d.setDate(0);
+  return d;
+}
+
+/** Reads a subscription back from Cashfree.
+ *
+ * This is what makes the return-from-checkout trustworthy. Cashfree's own
+ * guidance is not to treat a browser redirect as proof of payment - the
+ * customer can close the tab, lose signal, or simply edit the URL - so the
+ * landing page asks the gateway what actually happened rather than believing
+ * the redirect.
+ *
+ * Path is the conventional REST shape, confirmed for /plans by a live call and
+ * assumed to be consistent here; a wrong guess surfaces as a CashfreeApiError
+ * with the status and code rather than as a silent success. */
+export async function getSubscription(subscriptionId: string): Promise<CashfreeSubscription> {
+  return cashfreeFetch<CashfreeSubscription>(`/subscriptions/${encodeURIComponent(subscriptionId)}`);
+}
+
+/** Has the mandate been authorised - and therefore the first cycle collected?
+ *
+ * ACTIVE is the only status that means both. INITIALIZED is a subscription
+ * created but never authorised, which is exactly what an abandoned checkout
+ * leaves behind, and treating it as paid would license a tenant for nothing. */
+export function subscriptionIsAuthorised(sub: CashfreeSubscription): boolean {
+  return sub.subscription_status === "ACTIVE";
+}

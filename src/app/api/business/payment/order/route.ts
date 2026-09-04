@@ -3,12 +3,24 @@ import { pool } from "@/lib/db";
 import { businessTenantId, hasVerifiedRecently, normalizeMobile } from "@/lib/businessAuth";
 import { checkRateLimit } from "@/lib/rateLimit";
 import {
+  attachCashfreeToOrder,
   confirmOrder,
+  getBillingConfig,
   openOrderForMobile,
   paymentInstructions,
   type PaymentOrder,
 } from "@/lib/billing";
-import { upiPaymentsEnabled } from "@/lib/upi";
+import { isPlan, paymentProvider, type Plan } from "@/lib/upi";
+import { createSubscription, onePeriodAfter, subscriptionAuthPay } from "@/lib/cashfree";
+
+/** Good enough to catch a typo, deliberately not a full RFC 5322 parse.
+ * Cashfree does its own validation and will reject anything it dislikes; the
+ * point here is to fail before we create an order, not to be authoritative. */
+function normalizeEmail(raw: unknown): string | null {
+  if (typeof raw !== "string") return null;
+  const email = raw.trim();
+  return /^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email) ? email : null;
+}
 
 export const runtime = "nodejs";
 
@@ -29,6 +41,18 @@ export const runtime = "nodejs";
 export async function POST(req: NextRequest) {
   const body = await req.json().catch(() => ({}));
   const purpose = body.purpose === "renewal" ? "renewal" : "signup";
+  const plan: Plan = isPlan(body.plan) ? body.plan : "monthly";
+  const provider = paymentProvider();
+  const email = normalizeEmail(body.email);
+
+  // Cashfree will not create a subscription without one, so this is refused
+  // here rather than surfacing as a gateway error the payer cannot act on.
+  if (provider === "cashfree" && !email) {
+    return NextResponse.json(
+      { error: "A valid email address is required for your receipt" },
+      { status: 400 }
+    );
+  }
 
   let mobile: string;
   let tenantId: string | null = null;
@@ -64,23 +88,101 @@ export async function POST(req: NextRequest) {
 
   let order: PaymentOrder;
   try {
-    order = await openOrderForMobile({ mobile, purpose, tenantId });
+    order = await openOrderForMobile({
+      mobile,
+      purpose,
+      tenantId,
+      plan,
+      customerEmail: email,
+      provider,
+    });
   } catch (err) {
-    // The only way this throws is a missing VPA, which is a platform
-    // misconfiguration rather than anything the payer did wrong.
+    // The only way this throws is a missing VPA on the UPI path, which is a
+    // platform misconfiguration rather than anything the payer did wrong.
     console.error("[payment] could not open an order:", err);
     return NextResponse.json({ error: "Payments are not configured yet. Please contact support." }, { status: 503 });
   }
 
-  if (!upiPaymentsEnabled()) {
+  if (provider === "simulated") {
     const settled = order.status === "confirmed" ? order : await confirmOrder(order.id, "simulated");
     return NextResponse.json({
       mode: "simulated",
       orderId: settled.id,
       status: settled.status,
+      plan: settled.plan,
       amountPaise: settled.amountPaise,
       licensedUntil: settled.licensedUntil,
     });
+  }
+
+  if (provider === "cashfree") {
+    const config = await getBillingConfig();
+    const planId = plan === "annual" ? config.planIdAnnual : config.planIdMonthly;
+    if (!planId) {
+      console.error(`[payment] no Cashfree plan id configured for the ${plan} plan`);
+      return NextResponse.json({ error: "Payments are not configured yet. Please contact support." }, { status: 503 });
+    }
+
+    const root = process.env.TENANT_ROOT_DOMAIN || "";
+    const returnUrl = `https://${root}/signup?order=${encodeURIComponent(order.id)}`;
+
+    try {
+      const subscription = await createSubscription({
+        subscriptionId: order.id,
+        planId,
+        customerName: body.businessName?.toString().trim().slice(0, 100) || "MyBizCare customer",
+        customerEmail: email!,
+        customerPhone: order.mobile,
+        // The first cycle, collected at authorisation and not refunded. Taken
+        // from the ORDER, which was priced from the plan, so the amount
+        // authorised is the amount displayed.
+        authorizationAmountInr: Math.round(order.amountPaise / 100),
+        returnUrl,
+        // One full period out. The authorisation above already collects cycle
+        // one; scheduling the first periodic charge for "now" would bill the
+        // customer twice in their first week.
+        firstChargeAt: onePeriodAfter(new Date(), plan),
+      });
+
+      const sessionId = subscription.subscription_session_id;
+      if (!sessionId) throw new Error("Cashfree returned no subscription_session_id");
+
+      await attachCashfreeToOrder({
+        id: order.id,
+        cfSubscriptionId: subscription.cf_subscription_id ?? null,
+        cfPaymentSessionId: sessionId,
+      });
+
+      const auth = await subscriptionAuthPay({
+        subscriptionId: order.id,
+        paymentId: `${order.id}-AUTH`,
+        subscriptionSessionId: sessionId,
+      });
+
+      const redirectUrl = typeof auth.data?.url === "string" ? auth.data.url : null;
+      if (!redirectUrl) {
+        console.error("[payment] Cashfree AUTH returned no URL", {
+          channel: auth.channel,
+          action: auth.action,
+        });
+        return NextResponse.json({ error: "Could not start the payment. Please try again." }, { status: 502 });
+      }
+
+      return NextResponse.json({
+        mode: "cashfree",
+        orderId: order.id,
+        plan: order.plan,
+        amountPaise: order.amountPaise,
+        redirectUrl,
+      });
+    } catch (err) {
+      // Loud: a payer who cannot pay is the one failure that costs a customer.
+      console.error("[payment] Cashfree subscription failed for order", order.id, err);
+      return NextResponse.json(
+        { error: "Could not start the payment. Please try again." },
+        { status: 502 }
+      );
+    }
   }
 
   return NextResponse.json({ mode: "upi", ...(await paymentInstructions(order)) });

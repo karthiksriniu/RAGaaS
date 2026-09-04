@@ -1,5 +1,5 @@
 import { pool } from "@/lib/db";
-import { PROVISIONAL_DAYS } from "@/lib/upi";
+import { PROVISIONAL_DAYS, licensePeriodFor, type Plan } from "@/lib/upi";
 
 export interface Tenant {
   id: string;
@@ -264,10 +264,14 @@ export type LicenseKind = "provisional" | "full";
 export async function grantLicense(
   tenantId: string,
   kind: LicenseKind,
-  base: Date
+  base: Date,
+  /** Which plan was paid for. Only a FULL grant varies by it - a provisional
+   * window is the same three days whatever was bought, because it exists to
+   * cover the gap before confirmation, not to represent a period of service. */
+  plan: Plan = "monthly"
 ): Promise<string> {
   if (tenantId === PROTECTED_TENANT_ID) throw new DefaultTenantProtectedError();
-  const interval = kind === "full" ? "1 month" : `${PROVISIONAL_DAYS} days`;
+  const interval = kind === "full" ? licensePeriodFor(plan) : `${PROVISIONAL_DAYS} days`;
   const result = await pool.query<{ license_expires_at: string }>(
     `UPDATE tenants
         SET license_expires_at = greatest($2::timestamptz + $3::interval, license_expires_at)

@@ -11,6 +11,8 @@ import {
   CASHFREE_API_VERSION_DEFAULT,
   planKind,
   planToPaise,
+  onePeriodAfter,
+  toCashfreePhone,
 } from "../cashfree";
 
 // A webhook is the only thing standing between "Cashfree says this was paid"
@@ -290,5 +292,53 @@ describe("planToPaise", () => {
   it("returns null rather than 0 when there is no amount to convert", () => {
     expect(planToPaise({ plan_id: "p" })).toBeNull();
     expect(planToPaise({ plan_id: "p", plan_amount: NaN })).toBeNull();
+  });
+});
+
+
+// If the authorisation collects cycle one, the first PERIODIC charge must be a
+// full period out. Scheduled "now" it bills the customer twice in their first
+// week, and this is the arithmetic that stops it.
+describe("onePeriodAfter", () => {
+  const iso = (d: Date) => d.toISOString().slice(0, 10);
+
+  it("adds a calendar month, not thirty days", () => {
+    expect(iso(onePeriodAfter(new Date("2026-01-15T10:00:00Z"), "monthly"))).toBe("2026-02-15");
+    expect(iso(onePeriodAfter(new Date("2026-03-01T10:00:00Z"), "monthly"))).toBe("2026-04-01");
+  });
+
+  // 31 Jan + 1 month must not roll into March.
+  it("clamps to the last day when the next month is shorter", () => {
+    expect(iso(onePeriodAfter(new Date("2026-01-31T10:00:00Z"), "monthly"))).toBe("2026-02-28");
+    expect(iso(onePeriodAfter(new Date("2026-05-31T10:00:00Z"), "monthly"))).toBe("2026-06-30");
+  });
+
+  it("adds a calendar year", () => {
+    expect(iso(onePeriodAfter(new Date("2026-09-05T10:00:00Z"), "annual"))).toBe("2027-09-05");
+  });
+
+  // 29 Feb + a year has no counterpart; it must land on 28 Feb, not 1 March.
+  it("handles a leap day", () => {
+    expect(iso(onePeriodAfter(new Date("2028-02-29T10:00:00Z"), "annual"))).toBe("2029-02-28");
+  });
+
+  it("does not mutate the date it was given", () => {
+    const from = new Date("2026-01-15T10:00:00Z");
+    onePeriodAfter(from, "annual");
+    expect(iso(from)).toBe("2026-01-15");
+  });
+});
+
+describe("toCashfreePhone", () => {
+  it("reduces our E.164 numbers to the bare ten digits", () => {
+    expect(toCashfreePhone("+919840816035")).toBe("9840816035");
+    expect(toCashfreePhone("919840816035")).toBe("9840816035");
+    expect(toCashfreePhone("9840816035")).toBe("9840816035");
+    expect(toCashfreePhone("+91 98408 16035")).toBe("9840816035");
+  });
+
+  it("leaves a short or empty value alone rather than inventing digits", () => {
+    expect(toCashfreePhone("98408")).toBe("98408");
+    expect(toCashfreePhone("")).toBe("");
   });
 });

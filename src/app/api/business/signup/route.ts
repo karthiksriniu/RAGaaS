@@ -108,7 +108,8 @@ export async function POST(req: NextRequest) {
     licenseExpiresAt = await grantLicense(
       provisioned.tenantId,
       licenseKind ?? "provisional",
-      new Date(order.claimedAt || order.createdAt)
+      new Date(order.claimedAt || order.createdAt),
+      order.plan
     );
     await setOrderLicensedUntil(order.id, licenseExpiresAt);
   }

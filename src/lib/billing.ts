@@ -105,6 +105,11 @@ export async function updateBillingConfig(patch: Partial<Record<
 export interface PaymentOrder {
   id: string;
   mobile: string;
+  plan: Plan;
+  provider: string;
+  customerEmail: string | null;
+  cfSubscriptionId: string | null;
+  cfPaymentSessionId: string | null;
   tenantId: string | null;
   purpose: OrderPurpose;
   amountPaise: number;
@@ -123,6 +128,11 @@ export interface PaymentOrder {
 interface OrderRow {
   id: string;
   mobile: string;
+  plan: Plan;
+  provider: string;
+  customer_email: string | null;
+  cf_subscription_id: string | null;
+  cf_payment_session_id: string | null;
   tenant_id: string | null;
   purpose: OrderPurpose;
   amount_paise: number;
@@ -142,6 +152,11 @@ function mapOrder(row: OrderRow): PaymentOrder {
   return {
     id: row.id,
     mobile: row.mobile,
+    plan: row.plan,
+    provider: row.provider,
+    customerEmail: row.customer_email,
+    cfSubscriptionId: row.cf_subscription_id,
+    cfPaymentSessionId: row.cf_payment_session_id,
     tenantId: row.tenant_id,
     purpose: row.purpose,
     amountPaise: row.amount_paise,
@@ -216,30 +231,81 @@ export async function openOrderForMobile(input: {
   mobile: string;
   purpose: OrderPurpose;
   tenantId?: string | null;
+  plan?: Plan;
+  customerEmail?: string | null;
+  provider?: string;
 }): Promise<PaymentOrder> {
   const existing = await liveOrderForMobile(input.mobile, input.purpose);
-  if (existing) return existing;
+  // A live order is reused, but the payer may have come back and chosen the
+  // other plan - so the plan (and its price) is corrected rather than silently
+  // keeping the first choice. The id is what must stay stable, not the amount.
+  if (existing) {
+    const plan = input.plan ?? existing.plan;
+    const email = input.customerEmail ?? existing.customerEmail;
+    if (plan === existing.plan && email === existing.customerEmail) return existing;
+    const config = await getBillingConfig();
+    const res = await pool.query<OrderRow>(
+      `UPDATE payment_orders SET plan = $2, amount_paise = $3, customer_email = $4
+        WHERE id = $1 RETURNING *`,
+      [existing.id, plan, plan === "annual" ? config.annualAmountPaise : config.amountPaise, email]
+    );
+    return mapOrder(res.rows[0]);
+  }
 
   const config = await getBillingConfig();
-  if (!config.vpa) throw new Error("No UPI VPA is configured - set it in /admin");
+  const plan: Plan = input.plan ?? "monthly";
+  const provider = input.provider ?? "upi";
+  // The VPA only matters to the UPI path; a Cashfree order never shows one, and
+  // requiring it would block the gateway on a setting it does not use.
+  if (provider === "upi" && !config.vpa) {
+    throw new Error("No UPI VPA is configured - set it in /admin");
+  }
 
   const res = await pool.query<OrderRow>(
     `INSERT INTO payment_orders
-       (id, mobile, tenant_id, purpose, amount_paise, vpa, payee_name, status, qr_expires_at)
-     VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', now() + $8::interval)
+       (id, mobile, tenant_id, purpose, amount_paise, vpa, payee_name, status, qr_expires_at,
+        plan, provider, customer_email)
+     VALUES ($1, $2, $3, $4, $5, $6, $7, 'pending', now() + $8::interval, $9, $10, $11)
      RETURNING *`,
     [
       newOrderId(),
       input.mobile,
       input.tenantId ?? null,
       input.purpose,
-      config.amountPaise,
+      plan === "annual" ? config.annualAmountPaise : config.amountPaise,
       config.vpa,
       config.payeeName,
       `${QR_TTL_MINUTES} minutes`,
+      plan,
+      provider,
+      input.customerEmail ?? null,
     ]
   );
   return mapOrder(res.rows[0]);
+}
+
+/** Records what Cashfree gave back, so a webhook naming a subscription can be
+ * traced to the order that created it. */
+export async function attachCashfreeToOrder(input: {
+  id: string;
+  cfSubscriptionId: string | null;
+  cfPaymentSessionId: string | null;
+}): Promise<void> {
+  await pool.query(
+    `UPDATE payment_orders
+        SET cf_subscription_id = $2, cf_payment_session_id = $3, provider = 'cashfree'
+      WHERE id = $1`,
+    [input.id, input.cfSubscriptionId, input.cfPaymentSessionId]
+  );
+}
+
+/** The order a Cashfree webhook is about. */
+export async function findOrderByCfSubscription(cfSubscriptionId: string): Promise<PaymentOrder | null> {
+  const res = await pool.query<OrderRow>(
+    "SELECT * FROM payment_orders WHERE cf_subscription_id = $1 ORDER BY created_at DESC LIMIT 1",
+    [cfSubscriptionId]
+  );
+  return res.rows[0] ? mapOrder(res.rows[0]) : null;
 }
 
 /** The payer's own word that they have paid.
@@ -283,7 +349,7 @@ export async function claimOrder(id: string, utr: string | null): Promise<Paymen
   }
 
   if (claimed.tenantId) {
-    const until = await grantLicense(claimed.tenantId, "provisional", new Date(claimed.claimedAt!));
+    const until = await grantLicense(claimed.tenantId, "provisional", new Date(claimed.claimedAt!), claimed.plan);
     return recordLicensedUntil(claimed, until);
   }
   return claimed;
@@ -312,7 +378,7 @@ export async function confirmOrder(id: string, by: string): Promise<PaymentOrder
 
   const confirmed = mapOrder(res.rows[0]);
   if (confirmed.tenantId) {
-    const until = await grantLicense(confirmed.tenantId, "full", new Date(confirmed.claimedAt!));
+    const until = await grantLicense(confirmed.tenantId, "full", new Date(confirmed.claimedAt!), confirmed.plan);
     await giveNumberIfOwed(confirmed.tenantId);
     return recordLicensedUntil(confirmed, until);
   }

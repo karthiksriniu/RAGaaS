@@ -13,8 +13,39 @@ import { MobileField, toE164 } from "@/components/MobileField";
 import { PLAN_FEATURES, UpiPayment, type PaymentInstructions } from "@/components/UpiPayment";
 
 type Step = "details" | "otp" | "plan" | "qr" | "paying" | "paid" | "provisioning" | "done";
+type PlanChoice = "monthly" | "annual";
 
 const FALLBACK_PRICE = 999;
+const FALLBACK_ANNUAL = 9999;
+
+/** The signup details, parked so they survive the round trip to Cashfree.
+ *
+ * A hosted checkout is a full-page navigation away and back, which takes React
+ * state with it. Without this, a payer returns having paid, with a live
+ * subscription, and an empty form - money taken and no tenant to show for it.
+ * sessionStorage rather than localStorage: it belongs to this tab and this
+ * signup, and should not outlive either. */
+const RESUME_KEY = "mbc-signup-resume";
+
+interface ResumeState {
+  businessName: string;
+  description: string;
+  website: string;
+  mobile: string;
+}
+
+function parkDetails(d: ResumeState) {
+  try { sessionStorage.setItem(RESUME_KEY, JSON.stringify(d)); } catch { /* private mode */ }
+}
+function recoverDetails(): ResumeState | null {
+  try {
+    const raw = sessionStorage.getItem(RESUME_KEY);
+    return raw ? (JSON.parse(raw) as ResumeState) : null;
+  } catch { return null; }
+}
+function clearDetails() {
+  try { sessionStorage.removeItem(RESUME_KEY); } catch { /* private mode */ }
+}
 
 export default function SignupPage() {
   const router = useRouter();
@@ -29,18 +60,77 @@ export default function SignupPage() {
   const [error, setError] = useState<string | null>(null);
   const [busy, setBusy] = useState(false);
   const [price, setPrice] = useState(FALLBACK_PRICE);
+  const [annualPrice, setAnnualPrice] = useState(FALLBACK_ANNUAL);
+  const [savingPct, setSavingPct] = useState(17);
+  const [plan, setPlan] = useState<PlanChoice>("monthly");
+  const [email, setEmail] = useState("");
+  const [authorised, setAuthorised] = useState(false);
   const [payment, setPayment] = useState<PaymentInstructions | null>(null);
   const [result, setResult] = useState<{ phoneNumber: string | null; tenantId: string; licenseState: string } | null>(null);
 
   // Guards the auto-advance from the payment poller: a confirmation landing
   // while provisioning is already under way must not start a second signup.
   const provisioning = useRef(false);
+  // finishSignup is declared after the resume effect; the ref is how the effect
+  // reaches it without hoisting the whole callback above its own dependencies.
+  const finishSignupRef = useRef<((orderId: string, recovered?: ResumeState) => Promise<void>) | null>(null);
 
   useEffect(() => {
     fetch("/api/business/plan")
       .then((r) => (r.ok ? r.json() : null))
-      .then((d) => d?.priceInr && setPrice(d.priceInr))
+      .then((d) => {
+        if (!d) return;
+        if (d.priceInr) setPrice(d.priceInr);
+        if (d.annualPriceInr) setAnnualPrice(d.annualPriceInr);
+        if (typeof d.savingPct === "number") setSavingPct(d.savingPct);
+      })
       .catch(() => {});
+  }, []);
+
+  // Coming back from the hosted checkout. The redirect itself is not treated as
+  // proof of anything - it carries only an order id, and the server asks
+  // Cashfree what actually happened. Runs once.
+  const resumed = useRef(false);
+  useEffect(() => {
+    if (resumed.current) return;
+    const orderId = new URLSearchParams(window.location.search).get("order");
+    if (!orderId) return;
+    resumed.current = true;
+
+    const details = recoverDetails();
+    // Strip the query string so a refresh does not re-run this.
+    window.history.replaceState({}, "", "/signup");
+
+    (async () => {
+      setStep("paying");
+      try {
+        const res = await fetch(`/api/business/payment/${encodeURIComponent(orderId)}/verify`, {
+          method: "POST",
+        });
+        const d = await res.json().catch(() => ({}));
+        if (!res.ok || !d.ok) {
+          setError(
+            "We could not confirm your payment. If money has left your account it will be " +
+              "confirmed shortly - please contact support rather than paying again."
+          );
+          setStep("plan");
+          return;
+        }
+        if (!details) {
+          setError(
+            "Your payment went through, but this browser lost your business details. " +
+              "Please contact support and we'll finish setting you up."
+          );
+          setStep("plan");
+          return;
+        }
+        setStep("paid");
+        await finishSignupRef.current?.(orderId, details);
+      } catch {
+        setError("We could not confirm your payment. Please contact support.");
+        setStep("plan");
+      }
+    })();
   }, []);
 
   async function post(url: string, body: unknown) {
@@ -99,10 +189,27 @@ export default function SignupPage() {
     setError(null);
     setBusy(true);
     try {
+      const details: ResumeState = {
+        businessName, description, website, mobile: toE164(mobile),
+      };
+      // Parked BEFORE the request: if the redirect happens we never get another
+      // chance to write it.
+      parkDetails(details);
+
       const d = await post("/api/business/payment/order", {
         mobile: toE164(mobile),
         purpose: "signup",
+        plan,
+        email: email.trim(),
+        businessName,
       });
+
+      if (d.mode === "cashfree") {
+        // Full-page navigation, not a popup: UPI apps hand control back through
+        // the browser, and a popup is where that gets lost.
+        window.location.assign(d.redirectUrl);
+        return;
+      }
 
       if (d.mode === "simulated") {
         setStep("paying");
@@ -122,19 +229,23 @@ export default function SignupPage() {
   }
 
   const finishSignup = useCallback(
-    async (orderId: string) => {
+    async (orderId: string, recovered?: ResumeState) => {
       if (provisioning.current) return;
       provisioning.current = true;
       setError(null);
       setStep("provisioning");
       try {
+        // On the return from Cashfree the form state is gone with the page, so
+        // the parked copy is used instead. Passed explicitly rather than via
+        // setState first: a state update is not visible to this closure.
         const d = await post("/api/business/signup", {
-          mobile: toE164(mobile),
-          businessName,
-          description,
-          website,
+          mobile: recovered ? recovered.mobile : toE164(mobile),
+          businessName: recovered ? recovered.businessName : businessName,
+          description: recovered ? recovered.description : description,
+          website: recovered ? recovered.website : website,
           orderId,
         });
+        clearDetails();
         setResult({ phoneNumber: d.phoneNumber ?? null, tenantId: d.tenantId, licenseState: d.licenseState });
         setStep("done");
       } catch (e) {
@@ -145,6 +256,8 @@ export default function SignupPage() {
     },
     [mobile, businessName, description, website, payment]
   );
+
+  useEffect(() => { finishSignupRef.current = finishSignup; }, [finishSignup]);
 
   return (
     <div className="flex min-h-screen flex-col items-center px-4 py-6 sm:py-12" style={{ background: "var(--color-surface)" }}>
@@ -234,23 +347,84 @@ export default function SignupPage() {
           <>
             <h1 className="kw-headline-small mb-1">Choose your plan</h1>
             <p className="kw-body-medium mb-6" style={{ color: "var(--color-on-surface-variant)" }}>
-              One plan, everything included.
+              Everything included, either way. Cancel any time.
             </p>
-            <Card variant="filled" padding={20} selected>
-              <div className="flex items-baseline justify-between">
-                <span className="kw-title-medium">Standard</span>
-                <span className="kw-headline-small">₹{price}<span className="kw-body-medium">/month</span></span>
-              </div>
-              <ul className="mt-3 flex flex-col gap-1">
-                {PLAN_FEATURES.map((f) => (
-                  <li key={f} className="kw-body-medium" style={{ color: "var(--color-on-surface-variant)" }}>• {f}</li>
-                ))}
-              </ul>
-            </Card>
+
+            <div className="flex flex-col gap-3">
+              {([
+                { key: "monthly" as const, label: "Monthly", amount: price, per: "/month", note: null },
+                { key: "annual" as const, label: "Annual", amount: annualPrice, per: "/year",
+                  note: savingPct > 0 ? `Save ${savingPct}% against paying monthly` : null },
+              ]).map((option) => (
+                <button
+                  key={option.key}
+                  type="button"
+                  onClick={() => setPlan(option.key)}
+                  aria-pressed={plan === option.key}
+                  className="text-left"
+                  style={{ background: "none", border: "none", padding: 0, cursor: "pointer" }}
+                >
+                  <Card variant="filled" padding={20} selected={plan === option.key}>
+                    <div className="flex items-baseline justify-between">
+                      <span className="kw-title-medium">{option.label}</span>
+                      <span className="kw-headline-small">
+                        ₹{option.amount}
+                        <span className="kw-body-medium">{option.per}</span>
+                      </span>
+                    </div>
+                    {option.note && (
+                      <p className="kw-body-small mt-1" style={{ color: "var(--color-primary)" }}>
+                        {option.note}
+                      </p>
+                    )}
+                  </Card>
+                </button>
+              ))}
+            </div>
+
+            <ul className="mt-4 flex flex-col gap-1">
+              {PLAN_FEATURES.map((f) => (
+                <li key={f} className="kw-body-medium" style={{ color: "var(--color-on-surface-variant)" }}>• {f}</li>
+              ))}
+            </ul>
+
+            <div className="mt-5">
+              <TextField
+                label="Email for your receipt"
+                type="email"
+                value={email}
+                onChange={(e) => setEmail(e.target.value)}
+                placeholder="you@yourbusiness.com"
+              />
+            </div>
+
+            {/* The mandate is the part people do not expect, so it is stated in
+                full and must be ticked deliberately - not buried in fine print
+                under the button. */}
+            <label className="mt-4 flex items-start gap-3" style={{ cursor: "pointer" }}>
+              <input
+                type="checkbox"
+                checked={authorised}
+                onChange={(e) => setAuthorised(e.target.checked)}
+                style={{ marginTop: "0.25rem", width: "1.1rem", height: "1.1rem", flex: "none",
+                         accentColor: "var(--color-primary)", cursor: "pointer" }}
+              />
+              <span className="kw-body-small" style={{ color: "var(--color-on-surface-variant)" }}>
+                I authorise MyBizCare to charge ₹{plan === "annual" ? annualPrice : price}{" "}
+                {plan === "annual" ? "every year" : "every month"} to this payment method until I
+                cancel. I can cancel any time from my dashboard.
+              </span>
+            </label>
+
             {error && <p className="kw-body-small mt-3" style={{ color: "var(--color-error)" }}>{error}</p>}
             <div className="mt-6">
-              <Button variant="filled" fullWidth disabled={busy} onClick={pay}>
-                {busy ? "Please wait…" : `Pay ₹${price}`}
+              <Button
+                variant="filled"
+                fullWidth
+                disabled={busy || !authorised || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim())}
+                onClick={pay}
+              >
+                {busy ? "Please wait…" : `Pay ₹${plan === "annual" ? annualPrice : price}`}
               </Button>
             </div>
           </>
