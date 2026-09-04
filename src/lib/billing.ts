@@ -3,6 +3,7 @@ import { pool } from "@/lib/db";
 import { grantLicense, expireLicenseNow } from "@/lib/tenants";
 import {
   PLAN_PRICE_INR,
+  PLAN_PRICE_ANNUAL_INR,
   QR_TTL_MINUTES,
   buildUpiUri,
   canClaim,
@@ -10,7 +11,9 @@ import {
   newOrderId,
   type OrderPurpose,
   type OrderStatus,
+  type Plan,
 } from "@/lib/upi";
+import { getPlan, planKind, planToPaise, type PlanIntervalType } from "@/lib/cashfree";
 
 // The DB-backed half of billing: platform configuration, the payment order
 // lifecycle, and the licence each stage of it grants. The pure half - prices,
@@ -21,6 +24,13 @@ export interface BillingConfig {
   payeeName: string;
   priceInr: number;
   amountPaise: number;
+  annualPriceInr: number;
+  annualAmountPaise: number;
+  /** Cashfree plan ids. Per-environment by construction: platform_settings
+   * lives in the schema, so staging's sandbox ids and production's live ids
+   * never meet. Null until configured. */
+  planIdMonthly: string | null;
+  planIdAnnual: string | null;
 }
 
 /** Where the money goes and how much of it.
@@ -33,24 +43,53 @@ export interface BillingConfig {
 export async function getBillingConfig(): Promise<BillingConfig> {
   const rows = await pool.query<{ key: string; value: string }>(
     "SELECT key, value FROM platform_settings WHERE key = ANY($1)",
-    [["upi_vpa", "upi_payee_name", "plan_price_inr"]]
+    [[
+      "upi_vpa",
+      "upi_payee_name",
+      "plan_price_inr",
+      "plan_price_annual_inr",
+      "cashfree_plan_id_monthly",
+      "cashfree_plan_id_annual",
+    ]]
   );
   const settings = new Map(rows.rows.map((r) => [r.key, r.value]));
 
-  const priceRaw = settings.get("plan_price_inr") || process.env.PLAN_PRICE_INR || "";
-  const parsed = parseInt(priceRaw, 10);
-  const priceInr = Number.isFinite(parsed) && parsed > 0 ? parsed : PLAN_PRICE_INR;
+  const priceInr = positiveIntOr(
+    settings.get("plan_price_inr") || process.env.PLAN_PRICE_INR,
+    PLAN_PRICE_INR
+  );
+  const annualPriceInr = positiveIntOr(
+    settings.get("plan_price_annual_inr") || process.env.PLAN_PRICE_ANNUAL_INR,
+    PLAN_PRICE_ANNUAL_INR
+  );
 
   return {
     vpa: settings.get("upi_vpa") || process.env.UPI_VPA || "",
     payeeName: settings.get("upi_payee_name") || process.env.UPI_PAYEE_NAME || "MyBizCare",
     priceInr,
     amountPaise: priceInr * 100,
+    annualPriceInr,
+    annualAmountPaise: annualPriceInr * 100,
+    planIdMonthly:
+      settings.get("cashfree_plan_id_monthly") || process.env.CASHFREE_PLAN_ID_MONTHLY || null,
+    planIdAnnual:
+      settings.get("cashfree_plan_id_annual") || process.env.CASHFREE_PLAN_ID_ANNUAL || null,
   };
 }
 
+function positiveIntOr(raw: string | undefined, fallback: number): number {
+  const parsed = parseInt(raw || "", 10);
+  return Number.isFinite(parsed) && parsed > 0 ? parsed : fallback;
+}
+
 export async function updateBillingConfig(patch: Partial<Record<
-  "upi_vpa" | "upi_payee_name" | "plan_price_inr", string
+  | "upi_vpa"
+  | "upi_payee_name"
+  | "plan_price_inr"
+  | "plan_price_annual_inr"
+  | "cashfree_plan_id_monthly"
+  | "cashfree_plan_id_annual",
+  string
 >>): Promise<BillingConfig> {
   for (const [key, value] of Object.entries(patch)) {
     if (value === undefined) continue;
@@ -402,6 +441,69 @@ export async function recordWebhookEvent(input: {
     [input.id, input.provider, input.type, input.rawPayload]
   );
   return res.rowCount !== null && res.rowCount > 0;
+}
+
+export interface ResolvedPlan {
+  plan: Plan;
+  planId: string;
+  /** What Cashfree will actually charge. This, not the configured price, is
+   * what the signup page shows - the gateway is the thing that moves money, so
+   * it is the only honest number to put in front of a payer. */
+  amountPaise: number;
+  /** What platform_settings says. Differs only if someone edited one side. */
+  configuredAmountPaise: number;
+  /** True when those two disagree. Not fatal to rendering a price - the page
+   * shows Cashfree's - but it means the marketing page is advertising
+   * something else, which is exactly the drift the price was moved into
+   * platform_settings to prevent. */
+  mismatch: boolean;
+  intervalType: PlanIntervalType | null;
+}
+
+/** Both plans, as Cashfree actually holds them.
+ *
+ * Which plan is monthly and which is annual comes from planKind() reading
+ * plan_interval_type - never from the configured order or the plan's name. */
+export async function resolvePlans(): Promise<ResolvedPlan[]> {
+  const config = await getBillingConfig();
+  const wanted: { plan: Plan; planId: string | null; configuredAmountPaise: number }[] = [
+    { plan: "monthly", planId: config.planIdMonthly, configuredAmountPaise: config.amountPaise },
+    { plan: "annual", planId: config.planIdAnnual, configuredAmountPaise: config.annualAmountPaise },
+  ];
+
+  const resolved: ResolvedPlan[] = [];
+  for (const want of wanted) {
+    if (!want.planId) continue;
+    const fetched = await getPlan(want.planId);
+    const kind = planKind(fetched);
+    // The id configured under "monthly" charging by the year is a
+    // misconfiguration that would put the wrong price under the wrong heading.
+    // Refused outright rather than displayed.
+    if (kind && kind !== want.plan) {
+      throw new Error(
+        `Cashfree plan ${want.planId} is configured as the ${want.plan} plan but bills ` +
+          `${fetched.plan_interval_type}. Fix the plan ids in /admin before anyone can pay.`
+      );
+    }
+    const amountPaise = planToPaise(fetched) ?? want.configuredAmountPaise;
+    const mismatch = amountPaise !== want.configuredAmountPaise;
+    if (mismatch) {
+      console.error(
+        `[billing] price drift: Cashfree plan ${want.planId} charges ${amountPaise} paise, ` +
+          `platform_settings says ${want.configuredAmountPaise}. The site is advertising a ` +
+          `price it will not charge.`
+      );
+    }
+    resolved.push({
+      plan: want.plan,
+      planId: want.planId,
+      amountPaise,
+      configuredAmountPaise: want.configuredAmountPaise,
+      mismatch,
+      intervalType: fetched.plan_interval_type ?? null,
+    });
+  }
+  return resolved;
 }
 
 export class PaymentOrderNotFoundError extends Error {

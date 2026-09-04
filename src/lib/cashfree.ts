@@ -12,8 +12,18 @@ import { createHash, createHmac, timingSafeEqual } from "crypto";
 export type CashfreeEnv = "sandbox" | "production";
 
 /** Cashfree's own header, not a date - the version pins the request/response
- * shape, so it changes only deliberately. */
-export const CASHFREE_API_VERSION = "2025-01-01";
+ * shape, so it changes only deliberately.
+ *
+ * Overridable by env because Cashfree's own documentation disagrees with
+ * itself: the orders/redirect page says 2025-01-01 while the subscriptions
+ * reference says 2026-01-01. A wrong version does not fail loudly - it changes
+ * field names in the response - so this is settled against the sandbox and,
+ * until it is, must be changeable from Vercel without a redeploy. */
+export const CASHFREE_API_VERSION_DEFAULT = "2025-01-01";
+
+export function cashfreeApiVersion(): string {
+  return (process.env.CASHFREE_API_VERSION || "").trim() || CASHFREE_API_VERSION_DEFAULT;
+}
 
 const BASE_URLS: Record<CashfreeEnv, string> = {
   sandbox: "https://sandbox.cashfree.com/pg",
@@ -103,7 +113,7 @@ export function cashfreeAuthHeaders(config: CashfreeConfig): Record<string, stri
   return {
     "x-client-id": config.appId,
     "x-client-secret": config.secretKey,
-    "x-api-version": CASHFREE_API_VERSION,
+    "x-api-version": cashfreeApiVersion(),
     "content-type": "application/json",
   };
 }
@@ -170,4 +180,126 @@ export class CashfreeNotConfiguredError extends Error {
     super(message);
     this.name = "CashfreeNotConfiguredError";
   }
+}
+
+
+// ---------------------------------------------------------------------------
+// HTTP client
+// ---------------------------------------------------------------------------
+
+/** A Cashfree API call that failed. Carries the status and Cashfree's own code
+ * so a caller can tell "your key is wrong" from "that plan does not exist"
+ * without parsing prose. */
+export class CashfreeApiError extends Error {
+  readonly status: number;
+  readonly code: string | null;
+  constructor(status: number, code: string | null, message: string) {
+    super(message);
+    this.name = "CashfreeApiError";
+    this.status = status;
+    this.code = code;
+  }
+}
+
+/** One JSON call to Cashfree.
+ *
+ * Errors are read out of the body rather than thrown as a bare status: Cashfree
+ * returns a `message`/`code` pair that says exactly what is wrong, and losing it
+ * turns a five-second fix into an afternoon. The request body is never logged -
+ * it carries customer phone numbers - and neither are the headers, which carry
+ * the secret. */
+export async function cashfreeFetch<T>(
+  path: string,
+  init: { method: "GET" | "POST"; body?: unknown } = { method: "GET" }
+): Promise<T> {
+  const config = cashfreeConfig();
+  const url = `${config.baseUrl}${path}`;
+
+  let res: Response;
+  try {
+    res = await fetch(url, {
+      method: init.method,
+      headers: cashfreeAuthHeaders(config),
+      body: init.body === undefined ? undefined : JSON.stringify(init.body),
+      // Cashfree is in the signup critical path; a hung socket must not hold a
+      // serverless invocation open until the platform kills it.
+      signal: AbortSignal.timeout(20_000),
+    });
+  } catch (err) {
+    throw new CashfreeApiError(0, "network", `Could not reach Cashfree: ${(err as Error).message}`);
+  }
+
+  const text = await res.text();
+  let parsed: unknown = null;
+  try {
+    parsed = text ? JSON.parse(text) : null;
+  } catch {
+    // Fall through - a non-JSON body is itself the diagnostic.
+  }
+
+  if (!res.ok) {
+    const body = (parsed || {}) as { message?: string; code?: string; type?: string };
+    throw new CashfreeApiError(
+      res.status,
+      body.code || body.type || null,
+      body.message || `Cashfree ${init.method} ${path} failed with ${res.status}`
+    );
+  }
+  return parsed as T;
+}
+
+// ---------------------------------------------------------------------------
+// Plans
+// ---------------------------------------------------------------------------
+
+export type PlanIntervalType = "DAY" | "WEEK" | "MONTH" | "YEAR";
+
+/** A plan as Cashfree holds it. Only the fields we actually rely on are typed;
+ * the response carries more. */
+export interface CashfreePlan {
+  plan_id: string;
+  plan_name?: string;
+  plan_type?: string;
+  plan_currency?: string;
+  /** In rupees, not paise - Cashfree's subscription APIs are rupee-denominated,
+   * unlike our own amount_paise columns. Converting in one place (planToPaise)
+   * keeps that difference from leaking. */
+  plan_amount?: number;
+  plan_max_amount?: number;
+  plan_max_cycles?: number;
+  plan_intervals?: number;
+  plan_interval_type?: PlanIntervalType;
+  plan_status?: string;
+}
+
+/** Fetches one plan.
+ *
+ * NOTE: the path is the conventional REST shape and is NOT yet confirmed
+ * against a live call - Cashfree's published reference documents subscription
+ * creation and mandate creation, not plan retrieval. It is exercised against
+ * the sandbox before anything depends on it in production; if it is wrong, the
+ * CashfreeApiError's status and code say so immediately. */
+export async function getPlan(planId: string): Promise<CashfreePlan> {
+  return cashfreeFetch<CashfreePlan>(`/plans/${encodeURIComponent(planId)}`);
+}
+
+/** Cashfree quotes plan amounts in rupees; every amount we store is paise.
+ * Rounded rather than truncated so a rupee amount that arrives as 998.9999
+ * from a float round-trip does not silently become ₹998.99. */
+export function planToPaise(plan: CashfreePlan): number | null {
+  if (typeof plan.plan_amount !== "number" || !Number.isFinite(plan.plan_amount)) return null;
+  return Math.round(plan.plan_amount * 100);
+}
+
+/** Which of our two plans this Cashfree plan is.
+ *
+ * Decided on plan_interval_type alone, never on the plan's name or on the order
+ * the ids were configured in. A name is free text somebody typed into a
+ * dashboard; the interval type is the field that cannot be wrong about what the
+ * plan actually charges. Labelling the yearly plan "monthly" would put ₹9999
+ * under a ₹999 heading on the signup page. */
+export function planKind(plan: CashfreePlan): "monthly" | "annual" | null {
+  if (plan.plan_interval_type === "MONTH" && (plan.plan_intervals ?? 1) === 1) return "monthly";
+  if (plan.plan_interval_type === "YEAR" && (plan.plan_intervals ?? 1) === 1) return "annual";
+  return null;
 }

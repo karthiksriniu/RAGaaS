@@ -7,7 +7,10 @@ import {
   looksLikeTestAppId,
   verifyWebhookSignature,
   CashfreeNotConfiguredError,
-  CASHFREE_API_VERSION,
+  cashfreeApiVersion,
+  CASHFREE_API_VERSION_DEFAULT,
+  planKind,
+  planToPaise,
 } from "../cashfree";
 
 // A webhook is the only thing standing between "Cashfree says this was paid"
@@ -172,6 +175,7 @@ describe("credentials", () => {
     delete process.env.CASHFREE_APP_ID;
     delete process.env.CASHFREE_SECRET_KEY;
     delete process.env.CASHFREE_ENV;
+    delete process.env.CASHFREE_API_VERSION;
   });
   afterEach(() => {
     process.env = { ...saved };
@@ -234,7 +238,57 @@ describe("credentials", () => {
     expect(warn).toHaveBeenCalled();
   });
 
-  it("pins the API version rather than tracking whatever is current", () => {
-    expect(CASHFREE_API_VERSION).toBe("2025-01-01");
+  // Cashfree's own docs disagree about this - orders says 2025-01-01,
+  // subscriptions says 2026-01-01 - and a wrong version does not fail loudly,
+  // it changes field names. So it must be flippable from Vercel.
+  it("pins an API version but lets the environment override it", () => {
+    expect(cashfreeApiVersion()).toBe(CASHFREE_API_VERSION_DEFAULT);
+    process.env.CASHFREE_API_VERSION = "2026-01-01";
+    expect(cashfreeApiVersion()).toBe("2026-01-01");
+    process.env.CASHFREE_API_VERSION = "   ";
+    expect(cashfreeApiVersion()).toBe(CASHFREE_API_VERSION_DEFAULT);
+  });
+});
+
+
+// Which plan is which decides what a customer is charged under which heading.
+// It is read off plan_interval_type and nothing else - a plan's NAME is free
+// text somebody typed into a dashboard, and the two names supplied for these
+// very plans arrived transposed.
+describe("planKind", () => {
+  it("identifies plans by their interval, not their name", () => {
+    expect(planKind({ plan_id: "p", plan_name: "MyBizCare Annual", plan_interval_type: "MONTH" }))
+      .toBe("monthly");
+    expect(planKind({ plan_id: "p", plan_name: "MyBizCare Monthly", plan_interval_type: "YEAR" }))
+      .toBe("annual");
+  });
+
+  it("honours plan_intervals, so a 3-month plan is neither of ours", () => {
+    expect(planKind({ plan_id: "p", plan_interval_type: "MONTH", plan_intervals: 1 })).toBe("monthly");
+    expect(planKind({ plan_id: "p", plan_interval_type: "MONTH", plan_intervals: 3 })).toBeNull();
+    expect(planKind({ plan_id: "p", plan_interval_type: "YEAR", plan_intervals: 2 })).toBeNull();
+  });
+
+  it("refuses to guess at intervals we do not sell", () => {
+    expect(planKind({ plan_id: "p", plan_interval_type: "DAY" })).toBeNull();
+    expect(planKind({ plan_id: "p", plan_interval_type: "WEEK" })).toBeNull();
+    expect(planKind({ plan_id: "p" })).toBeNull();
+  });
+});
+
+describe("planToPaise", () => {
+  it("converts Cashfree's rupees to our paise", () => {
+    expect(planToPaise({ plan_id: "p", plan_amount: 999 })).toBe(99900);
+    expect(planToPaise({ plan_id: "p", plan_amount: 9999 })).toBe(999900);
+  });
+
+  it("rounds rather than truncates a float round-trip", () => {
+    expect(planToPaise({ plan_id: "p", plan_amount: 998.9999 })).toBe(99900);
+    expect(planToPaise({ plan_id: "p", plan_amount: 999.005 })).toBe(99901);
+  });
+
+  it("returns null rather than 0 when there is no amount to convert", () => {
+    expect(planToPaise({ plan_id: "p" })).toBeNull();
+    expect(planToPaise({ plan_id: "p", plan_amount: NaN })).toBeNull();
   });
 });

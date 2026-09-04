@@ -51,6 +51,8 @@ const before = await db.query(`
     (select count(*)::int from public.kb_files)           as files,
     (select count(*)::int from public.business_accounts)  as accounts,
     (select count(*)::int from public.payment_orders)     as payments,
+    (select count(*)::int from public.billing_subscriptions) as mandates,
+    (select count(*)::int from public.webhook_events)     as webhooks,
     (select count(*)::int from public.phone_number_pool
        where tenant_id is not null)                       as claimed_numbers`);
 console.log("\nBEFORE:", before.rows[0]);
@@ -84,6 +86,14 @@ try {
   await db.query(
     `DELETE FROM public.payment_orders WHERE tenant_id IS NULL OR tenant_id NOT IN (${keepList})`
   );
+  // Same reason as payment_orders, and the same failure if forgotten: 009 gave
+  // billing_subscriptions a foreign key to tenants, so the tenant delete below
+  // fails outright while any mandate row still points at a doomed tenant.
+  // Tenant-less rows go too - a mandate authorised during a signup that never
+  // finished belongs to an environment that no longer exists.
+  await db.query(
+    `DELETE FROM public.billing_subscriptions WHERE tenant_id IS NULL OR tenant_id NOT IN (${keepList})`
+  );
   // Hand the numbers back to the pool rather than deleting the rows: we still
   // own and pay for them, and the point of this reset is to re-use them.
   await db.query(`UPDATE public.phone_number_pool SET tenant_id = NULL, claimed_at = NULL`);
@@ -92,6 +102,11 @@ try {
   // Any half-finished signups would otherwise block those numbers from
   // signing up again, since a surviving challenge row reads as "not verified".
   await db.query(`DELETE FROM public.otp_challenges`);
+  // No foreign key, so this does not block anything - it is cleared because the
+  // webhook ledger is keyed on a hash of the event body. Re-firing the SAME
+  // sandbox test event after a reset would otherwise be recognised as a
+  // duplicate and silently ignored, which looks exactly like a broken webhook.
+  await db.query(`DELETE FROM public.webhook_events`);
   await db.query("COMMIT");
 } catch (err) {
   await db.query("ROLLBACK").catch(() => {});
@@ -107,6 +122,8 @@ const after = await db.query(`
     (select count(*)::int from public.kb_files)           as files,
     (select count(*)::int from public.business_accounts)  as accounts,
     (select count(*)::int from public.payment_orders)     as payments,
+    (select count(*)::int from public.billing_subscriptions) as mandates,
+    (select count(*)::int from public.webhook_events)     as webhooks,
     (select count(*)::int from public.phone_number_pool
        where tenant_id is null)                           as free_numbers`);
 console.log("\nAFTER:", after.rows[0]);
