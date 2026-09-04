@@ -377,6 +377,33 @@ export async function findOrderByReference(reference: string): Promise<PaymentOr
   return res.rows[0] ? mapOrder(res.rows[0]) : null;
 }
 
+/** Records a provider webhook, and says whether this is the first time we have
+ * seen it.
+ *
+ * The insert IS the idempotency gate: `on conflict do nothing` succeeds exactly
+ * once per id, so the caller acts only when this returns true. A gateway
+ * retries anything it did not get a 2xx for, and a retried charge event that
+ * ran twice would read as two periods paid for.
+ *
+ * `payload` is the raw body string, cast to jsonb rather than re-serialised
+ * from a parsed object - a webhook is the only record of a charge we did not
+ * initiate, so what is stored should be exactly what arrived. */
+export async function recordWebhookEvent(input: {
+  id: string;
+  provider: string;
+  type: string;
+  rawPayload: string;
+}): Promise<boolean> {
+  const res = await pool.query(
+    `INSERT INTO webhook_events (id, provider, type, payload)
+     VALUES ($1, $2, $3, $4::jsonb)
+     ON CONFLICT (id) DO NOTHING
+     RETURNING id`,
+    [input.id, input.provider, input.type, input.rawPayload]
+  );
+  return res.rowCount !== null && res.rowCount > 0;
+}
+
 export class PaymentOrderNotFoundError extends Error {
   constructor(id: string) {
     super(`Payment order not found: ${id}`);

@@ -8,8 +8,56 @@ import { randomBytes } from "crypto";
 // The DB-backed half - reading config, writing orders, granting licences -
 // lives in billing.ts.
 
-/** ₹999/month. The single plan. */
+/** ₹999/month. */
 export const PLAN_PRICE_INR = 999;
+
+/** ₹9999/year - twelve months for the price of ten, near enough.
+ *
+ * The discount is the point rather than the price: a business on the annual
+ * plan makes no monthly decision to keep paying, and a monthly decision is the
+ * thing that churns. */
+export const PLAN_PRICE_ANNUAL_INR = 9999;
+
+export type Plan = "monthly" | "annual";
+
+/** Narrows whatever arrived in a request body. Plan comes from the browser, and
+ * it decides how much is charged and how long a licence runs - so it is checked
+ * here rather than trusted anywhere. */
+export function isPlan(value: unknown): value is Plan {
+  return value === "monthly" || value === "annual";
+}
+
+/** Prices default to the compiled constants, but both are overridable because
+ * platform_settings is the real source of truth (see getBillingConfig) - the
+ * marketing page and the mandate must never be able to disagree. */
+export function priceInrForPlan(
+  plan: Plan,
+  monthlyInr: number = PLAN_PRICE_INR,
+  annualInr: number = PLAN_PRICE_ANNUAL_INR
+): number {
+  return plan === "annual" ? annualInr : monthlyInr;
+}
+
+/** The Postgres interval one paid cycle of this plan is worth.
+ *
+ * Returned as an interval string, not a day count, so grantLicense stays
+ * calendar-correct the way it already is for months: 31 Jan + 1 month is
+ * 28 Feb, and 29 Feb + 1 year is 28 Feb. Day arithmetic gets both wrong. */
+export function licensePeriodFor(plan: Plan): "1 month" | "1 year" {
+  return plan === "annual" ? "1 year" : "1 month";
+}
+
+/** What the annual plan saves against paying monthly for a year, as a whole
+ * percent. For the signup page's "save 17%" - computed, never typed in, so it
+ * cannot drift from the two prices it describes. */
+export function annualSavingPct(
+  monthlyInr: number = PLAN_PRICE_INR,
+  annualInr: number = PLAN_PRICE_ANNUAL_INR
+): number {
+  const twelveMonths = monthlyInr * 12;
+  if (twelveMonths <= 0) return 0;
+  return Math.round(((twelveMonths - annualInr) / twelveMonths) * 100);
+}
 
 /** How long a payer gets on nothing more than their own word that they paid.
  *

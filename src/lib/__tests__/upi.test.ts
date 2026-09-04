@@ -1,13 +1,19 @@
 import { describe, it, expect, beforeEach, afterEach } from "vitest";
 import {
+  annualSavingPct,
   buildUpiUri,
   canClaim,
   canConfirm,
   isOpenForPayment,
+  isPlan,
   licenseKindFor,
+  licensePeriodFor,
   newOrderId,
   normalizeUtr,
+  priceInrForPlan,
   upiPaymentsEnabled,
+  PLAN_PRICE_INR,
+  PLAN_PRICE_ANNUAL_INR,
 } from "../upi";
 
 // The parts of the payment flow with no database behind them, and every one of
@@ -162,5 +168,45 @@ describe("upiPaymentsEnabled", () => {
     process.env.UPI_PAYMENTS = "off";
     process.env.TENANT_ROOT_DOMAIN = "mybizcare.com";
     expect(upiPaymentsEnabled()).toBe(false);
+  });
+});
+
+// The plan a payer picks decides both how much is taken and how long the agent
+// keeps answering. Both halves are pure, so both are pinned here rather than
+// discovered against a live mandate.
+
+describe("plans", () => {
+  it("recognises only the two plans that exist", () => {
+    expect(isPlan("monthly")).toBe(true);
+    expect(isPlan("annual")).toBe(true);
+    for (const bad of ["MONTHLY", "yearly", "", null, undefined, 1, {}]) {
+      expect(isPlan(bad), String(bad)).toBe(false);
+    }
+  });
+
+  it("prices each plan, and lets platform_settings override both", () => {
+    expect(priceInrForPlan("monthly")).toBe(PLAN_PRICE_INR);
+    expect(priceInrForPlan("annual")).toBe(PLAN_PRICE_ANNUAL_INR);
+    expect(priceInrForPlan("monthly", 499, 4999)).toBe(499);
+    expect(priceInrForPlan("annual", 499, 4999)).toBe(4999);
+  });
+
+  // Intervals, not day counts: 31 Jan + 1 month must be 28 Feb, and a year
+  // added to 29 Feb must land on 28 Feb, which "+30 days" and "+365 days" both
+  // get wrong.
+  it("gives Postgres a calendar interval for each plan", () => {
+    expect(licensePeriodFor("monthly")).toBe("1 month");
+    expect(licensePeriodFor("annual")).toBe("1 year");
+  });
+
+  it("computes the annual saving instead of trusting a typed-in number", () => {
+    // 999 x 12 = 11,988 against 9,999 - a saving of 1,989.
+    expect(annualSavingPct()).toBe(17);
+    expect(annualSavingPct(100, 1200)).toBe(0);
+    expect(annualSavingPct(100, 600)).toBe(50);
+  });
+
+  it("never divides by a zero monthly price", () => {
+    expect(annualSavingPct(0, 9999)).toBe(0);
   });
 });
