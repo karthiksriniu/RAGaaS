@@ -294,6 +294,9 @@ class MyBizCareAgent(Agent):
         # Mirrors the target_language_code the TTS was constructed with. The
         # greeting is English, so that is where every call starts.
         self._tts_language = "en-IN"
+        # A failing component fires the error event on every turn; the caller
+        # should be apologised to and transferred exactly once.
+        self._rescuing = False
         # A knowledge-base lookup started from a partial transcript, so the
         # ~0.7s round trip overlaps the caller still talking instead of being
         # added on after they stop. Holds (query, task).
@@ -337,7 +340,62 @@ class MyBizCareAgent(Agent):
             logger.exception("could not switch TTS language to %s", code)
 
     async def on_enter(self) -> None:
+        # Registered here rather than in entrypoint() because this is the first
+        # point at which self.session exists AND the agent has the tenant's
+        # expert number to hand.
+        self.session.on("error", self._on_session_error)
         self.session.say(self._tenant.greeting)
+
+    def _on_session_error(self, ev) -> None:
+        """A component died mid-call. Say so, then hand the caller to a person.
+
+        This exists because of what silence costs. On 5 Sep the LLM answered 400
+        on every turn and the caller heard the greeting and then nothing at all -
+        no apology, no transfer, just a live line going nowhere until they hung
+        up. That looked like a telephony fault and was a dependency version.
+
+        Sync, because that is how session.on delivers; the work is spawned.
+        """
+        err = getattr(ev, "error", None)
+        source = type(getattr(ev, "source", None)).__name__
+
+        # LiveKit retries what it can. Transferring on a blip it was about to
+        # recover from would end a call that was going to be fine.
+        if getattr(err, "retryable", None) is True:
+            logger.warning("recoverable %s error, letting it retry: %s", source, err)
+            return
+
+        logger.error("fatal %s error, rescuing the call: %s", source, err)
+        asyncio.create_task(self._rescue_call())
+
+    async def _rescue_call(self) -> None:
+        """Apologise aloud, then transfer. Never raises, and runs once."""
+        if self._rescuing:
+            return  # a broken LLM fires this every turn; the caller needs one apology
+        self._rescuing = True
+
+        expert = self._tenant.expert_phone_number
+        try:
+            # say() goes straight to TTS and needs no LLM, which is the whole
+            # reason it can still speak when the LLM is what failed - it is why
+            # the greeting played on the silent calls.
+            line = (
+                "I'm sorry, I'm having trouble on my end. Let me put you through to someone."
+                if expert
+                else "I'm sorry, I'm having trouble on my end. Please call back in a few minutes."
+            )
+            await self.session.say(line)
+        except Exception:
+            # If TTS is what broke, the caller hears nothing - transfer anyway.
+            logger.exception("could not speak the failure message")
+
+        if not expert:
+            logger.error("no expert number for tenant %s; caller left with an apology only",
+                         self._tenant.tenant_id)
+            return
+
+        if not await self._warm_transfer(expert, self.session.history):
+            logger.error("rescue transfer failed for tenant %s", self._tenant.tenant_id)
 
     async def _retrieve(self, question: str) -> str:
         """The tenant's matching knowledge-base passages, or "" if none.
@@ -513,20 +571,31 @@ class MyBizCareAgent(Agent):
             )
             return "Transfer is unavailable. Apologise and offer to take a callback number instead."
 
+        logger.info("warm transfer requested (tenant=%s -> %s): %s",
+                    self._tenant.tenant_id, expert, reason)
+        if await self._warm_transfer(expert, ctx.session.history):
+            return "Transfer completed."
+        return "The transfer did not connect. Apologise and offer to take a callback number instead."
+
+    async def _warm_transfer(self, expert: str, chat_ctx) -> bool:
+        """Hand the caller to a person, briefing them with the transcript first.
+
+        Shared by the tool above and by the failure path below, so a transfer
+        the model asks for and a transfer we fall back to cannot drift into
+        behaving differently.
+        """
         # Beta namespace — see the pin in requirements.txt. Imported here so a
         # version mismatch breaks only the transfer path rather than stopping
         # the worker from starting and answering calls at all.
         from livekit.agents.beta.workflows import WarmTransferTask
         from livekit.protocol.sip import SIPOutboundConfig
 
-        logger.info("warm transfer requested (tenant=%s -> %s): %s",
-                    self._tenant.tenant_id, expert, reason)
         try:
             await WarmTransferTask(
                 sip_call_to=expert,
                 sip_connection=SIPOutboundConfig(
                     # .get() so a deployment without transfer configured fails
-                    # this one tool gracefully rather than crashing the call.
+                    # this one path gracefully rather than crashing the call.
                     hostname=os.getenv("SIP_TRUNK_HOSTNAME", ""),
                     auth_username=os.getenv("SIP_AUTH_USERNAME", ""),
                     auth_password=os.getenv("SIP_AUTH_PASSWORD", ""),
@@ -534,14 +603,13 @@ class MyBizCareAgent(Agent):
                 # Handing over the transcript is what makes this warm rather
                 # than merely connected: the expert hears the context before
                 # the caller is moved across.
-                chat_ctx=ctx.session.history,
+                chat_ctx=chat_ctx,
                 ringing_timeout=30.0,
             )
+            return True
         except Exception:
             logger.exception("warm transfer failed")
-            return "The transfer did not connect. Apologise and offer to take a callback number instead."
-
-        return "Transfer completed."
+            return False
 
 
 
