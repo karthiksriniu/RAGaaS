@@ -1,0 +1,252 @@
+import { describe, it, expect } from "vitest";
+import {
+  SLOT_MINUTES,
+  isStandardDuration,
+  istToUtc,
+  utcToIst,
+  istWeekday,
+  isOnGrid,
+  slotStartsFor,
+  availableStarts,
+  formatIstTime,
+  utilisation,
+  openSlotCount,
+  istDaysBetween,
+} from "../scheduling";
+
+// Every bug this file can have is one a customer feels: a booking an hour out,
+// two people given the same stylist, or a slot offered that runs past closing.
+
+describe("IST conversion", () => {
+  // The offset is a HALF hour, which is what breaks naive timezone arithmetic.
+  it("maps IST midnight to 18:30 UTC the previous day", () => {
+    expect(istToUtc("2026-09-05", 0).toISOString()).toBe("2026-09-04T18:30:00.000Z");
+  });
+
+  it("maps a working hour correctly", () => {
+    // 10:00 IST = 04:30 UTC
+    expect(istToUtc("2026-09-05", 600).toISOString()).toBe("2026-09-05T04:30:00.000Z");
+  });
+
+  it("rolls past-midnight closing into the next day", () => {
+    // 1am Saturday is closes_minute 1500 on Friday.
+    expect(istToUtc("2026-09-05", 1500).toISOString()).toBe("2026-09-05T19:30:00.000Z");
+  });
+
+  it("round-trips", () => {
+    for (const minute of [0, 15, 600, 1035, 1439]) {
+      const back = utcToIst(istToUtc("2026-09-05", minute));
+      expect(back.day, String(minute)).toBe("2026-09-05");
+      expect(back.minuteOfDay, String(minute)).toBe(minute);
+    }
+  });
+
+  // An instant late on an IST day is the NEXT day in UTC; reading the UTC date
+  // would file a 9pm booking under tomorrow.
+  it("reports the IST day, not the UTC one", () => {
+    const nineThirtyPm = istToUtc("2026-09-05", 21 * 60 + 30);
+    expect(nineThirtyPm.toISOString().slice(0, 10)).toBe("2026-09-05");
+    const elevenPm = istToUtc("2026-09-05", 23 * 60);
+    expect(elevenPm.toISOString().slice(0, 10)).toBe("2026-09-05");
+    expect(utcToIst(elevenPm).day).toBe("2026-09-05");
+  });
+
+  it("knows the weekday", () => {
+    expect(istWeekday("2026-09-05")).toBe(6); // Saturday
+    expect(istWeekday("2026-09-06")).toBe(0); // Sunday
+  });
+});
+
+describe("isOnGrid", () => {
+  it("accepts quarter-hour IST times", () => {
+    for (const m of [0, 15, 30, 45, 600, 1035]) {
+      expect(isOnGrid(istToUtc("2026-09-05", m)), String(m)).toBe(true);
+    }
+  });
+
+  it("rejects off-grid minutes", () => {
+    expect(isOnGrid(istToUtc("2026-09-05", 607))).toBe(false);
+  });
+
+  // The half-hour offset means epoch-based checks pass for times that are not
+  // on an IST quarter hour. This is the case that catches it.
+  it("is judged in IST, not against the epoch", () => {
+    const epochAligned = new Date("2026-09-05T10:00:00.000Z"); // 15:30 IST - on grid
+    expect(isOnGrid(epochAligned)).toBe(true);
+    const offInIst = new Date("2026-09-05T10:07:00.000Z"); // 15:37 IST
+    expect(isOnGrid(offInIst)).toBe(false);
+  });
+});
+
+describe("slotStartsFor", () => {
+  it("claims one slot per quarter hour", () => {
+    const start = istToUtc("2026-09-05", 600);
+    expect(slotStartsFor(start, 15)).toHaveLength(1);
+    expect(slotStartsFor(start, 30)).toHaveLength(2);
+    expect(slotStartsFor(start, 60)).toHaveLength(4);
+  });
+
+  it("steps by exactly the grid", () => {
+    const start = istToUtc("2026-09-05", 600);
+    const slots = slotStartsFor(start, 60).map((d) => utcToIst(d).minuteOfDay);
+    expect(slots).toEqual([600, 615, 630, 645]);
+  });
+
+  // The whole reason this table exists: a 30-minute booking starting halfway
+  // through an hour-long one shares a slot, so the database refuses it.
+  it("overlaps a longer booking that started earlier", () => {
+    const hourStart = istToUtc("2026-09-05", 600);
+    const halfHourLater = istToUtc("2026-09-05", 630);
+    const hour = slotStartsFor(hourStart, 60).map((d) => d.getTime());
+    const half = slotStartsFor(halfHourLater, 30).map((d) => d.getTime());
+    expect(half.some((s) => hour.includes(s))).toBe(true);
+  });
+
+  // Rounding a bad duration would quietly free a slot the customer thinks they
+  // hold, so this refuses instead.
+  it("refuses a duration that is not a whole number of slots", () => {
+    const start = istToUtc("2026-09-05", 600);
+    expect(() => slotStartsFor(start, 20)).toThrow(RangeError);
+    expect(() => slotStartsFor(start, 0)).toThrow(RangeError);
+    expect(() => slotStartsFor(start, 7.5)).toThrow(RangeError);
+  });
+});
+
+describe("availableStarts", () => {
+  const day = "2026-09-05";
+  const base = {
+    dayISO: day,
+    opensMinute: 600,   // 10:00
+    closesMinute: 720,  // 12:00
+    takenSlotMs: new Set<number>(),
+    now: new Date("2026-01-01T00:00:00Z"),
+  };
+
+  it("offers every grid start that fits", () => {
+    const starts = availableStarts({ ...base, durationMinutes: 30 });
+    expect(starts.map((d) => utcToIst(d).minuteOfDay)).toEqual([600, 615, 630, 645, 660, 675, 690]);
+  });
+
+  // Offering 11:45 for an hour at a place that shuts at noon is worse than
+  // offering nothing.
+  it("never offers a booking that would run past closing", () => {
+    const starts = availableStarts({ ...base, durationMinutes: 60 });
+    const last = utcToIst(starts[starts.length - 1]).minuteOfDay;
+    expect(last + 60).toBeLessThanOrEqual(720);
+    expect(last).toBe(660); // 11:00, finishing exactly at noon
+  });
+
+  it("skips a start whose LATER slots are taken", () => {
+    // 10:30 is booked. A 60-minute slot at 10:00 needs 10:00-11:00, so it must go.
+    const taken = new Set([istToUtc(day, 630).getTime()]);
+    const starts = availableStarts({ ...base, durationMinutes: 60, takenSlotMs: taken });
+    const minutes = starts.map((d) => utcToIst(d).minuteOfDay);
+    expect(minutes).not.toContain(600); // would span the taken slot
+    expect(minutes).not.toContain(615);
+    expect(minutes).not.toContain(630);
+    expect(minutes).toContain(645); // 10:45-11:45 is clear
+  });
+
+  it("rounds an odd opening time up rather than opening early", () => {
+    const starts = availableStarts({ ...base, opensMinute: 610, durationMinutes: 30 });
+    expect(utcToIst(starts[0]).minuteOfDay).toBe(615);
+  });
+
+  it("does not offer times in the past", () => {
+    const starts = availableStarts({
+      ...base,
+      durationMinutes: 30,
+      now: istToUtc(day, 660), // 11:00
+    });
+    expect(utcToIst(starts[0]).minuteOfDay).toBe(660);
+  });
+
+  it("caps the list, because an agent reading forty times is useless", () => {
+    expect(availableStarts({ ...base, durationMinutes: 15, limit: 3 })).toHaveLength(3);
+  });
+
+  it("returns nothing when closed", () => {
+    expect(availableStarts({ ...base, opensMinute: 600, closesMinute: 600, durationMinutes: 30 })).toEqual([]);
+  });
+
+  it("handles past-midnight closing", () => {
+    const starts = availableStarts({
+      ...base, opensMinute: 1380, closesMinute: 1500, durationMinutes: 60, // 23:00 to 01:00
+    });
+    // 23:00, 23:15, 23:30, 23:45, 00:00 - the last starts at midnight and still
+    // finishes by the 01:00 close.
+    expect(starts).toHaveLength(5);
+    expect(utcToIst(starts[0]).minuteOfDay).toBe(1380);
+    // The final start is the next IST day, which is the point of the rollover.
+    expect(utcToIst(starts[4]).day).toBe("2026-09-06");
+    expect(utcToIst(starts[4]).minuteOfDay).toBe(0);
+  });
+});
+
+describe("formatIstTime", () => {
+  const day = "2026-09-05";
+  it("speaks the way a person would", () => {
+    expect(formatIstTime(istToUtc(day, 0))).toBe("12 am");
+    expect(formatIstTime(istToUtc(day, 600))).toBe("10 am");
+    expect(formatIstTime(istToUtc(day, 630))).toBe("10:30 am");
+    expect(formatIstTime(istToUtc(day, 720))).toBe("12 pm");
+    expect(formatIstTime(istToUtc(day, 1035))).toBe("5:15 pm");
+    expect(formatIstTime(istToUtc(day, 1425))).toBe("11:45 pm");
+  });
+});
+
+describe("utilisation", () => {
+  it("is a fraction of open slots", () => {
+    expect(utilisation(5, 10)).toBe(0.5);
+    expect(utilisation(0, 10)).toBe(0);
+  });
+
+  // "Closed" and "open but empty" are different facts, and averaging them
+  // together reports neither.
+  it("is null when the resource was never open", () => {
+    expect(utilisation(0, 0)).toBeNull();
+  });
+
+  it("never exceeds 1, even if the data disagrees", () => {
+    expect(utilisation(12, 10)).toBe(1);
+  });
+});
+
+describe("openSlotCount", () => {
+  it("counts grid slots between opening and closing", () => {
+    expect(openSlotCount(600, 720)).toBe(8);   // two hours
+    expect(openSlotCount(600, 600)).toBe(0);
+    expect(openSlotCount(1380, 1500)).toBe(8); // across midnight
+  });
+
+  it("does not count a partial slot at either end", () => {
+    expect(openSlotCount(610, 715)).toBe(6);   // 615 to 705
+  });
+});
+
+describe("istDaysBetween", () => {
+  it("is inclusive at both ends", () => {
+    expect(istDaysBetween("2026-09-05", "2026-09-07")).toEqual(["2026-09-05", "2026-09-06", "2026-09-07"]);
+    expect(istDaysBetween("2026-09-05", "2026-09-05")).toEqual(["2026-09-05"]);
+  });
+
+  it("crosses a month and a leap day", () => {
+    expect(istDaysBetween("2026-01-31", "2026-02-01")).toEqual(["2026-01-31", "2026-02-01"]);
+    expect(istDaysBetween("2028-02-28", "2028-03-01")).toEqual(["2028-02-28", "2028-02-29", "2028-03-01"]);
+  });
+});
+
+describe("durations", () => {
+  it("accepts only the standard three", () => {
+    expect(isStandardDuration(15)).toBe(true);
+    expect(isStandardDuration(30)).toBe(true);
+    expect(isStandardDuration(60)).toBe(true);
+    for (const bad of [0, 10, 20, 45, 90, "30", null]) {
+      expect(isStandardDuration(bad), String(bad)).toBe(false);
+    }
+  });
+
+  it("keeps the grid the smallest standard duration", () => {
+    expect(SLOT_MINUTES).toBe(15);
+  });
+});
