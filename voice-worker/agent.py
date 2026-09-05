@@ -693,6 +693,14 @@ class SchedulingAgent(MyBizCareAgent):
                 said any time is fine - do NOT invent one.
         """
         resource = self._resource_by_name(resource_name)
+        # Asked for by name and no such person. Booking them with somebody else
+        # because the name did not match is the one outcome nobody forgives.
+        if resource_name and resource is None:
+            names = ", ".join(r.get("name", "") for r in self._tenant.resources if r.get("name"))
+            return (f"There is nobody here called '{resource_name}'. Tell the caller that, read "
+                    f"out who IS available - {names} - and ask which of them they would like. "
+                    "Do not book anyone until they choose.")
+
         payload: dict = {
             "tenantId": self._tenant.tenant_id,
             "durationMinutes": self._tenant.appointment_minutes,
@@ -727,10 +735,22 @@ class SchedulingAgent(MyBizCareAgent):
         if data.get("past"):
             return "That date has passed. Ask the caller which upcoming day they meant."
 
+        day_said = data.get("daySpoken") or "that day"
+
+        # Three different things, and only one of them is "fully booked".
+        if data.get("closed"):
+            return (f"The business is CLOSED on {day_said}. Say exactly that - do not say it is "
+                    "busy or fully booked - and ask which other day would suit them.")
+
+        if data.get("outsideHours"):
+            hours = data.get("hoursSpoken") or "our usual hours"
+            return (f"That time is outside opening hours. On {day_said} the business is open "
+                    f"{hours}. Say so, and offer a time inside those hours.")
+
         self._offered = data.get("options") or []
         if not self._offered:
-            return ("Nothing is free then. Tell the caller that day is fully booked and ask "
-                    "whether another day would work.")
+            return (f"Everything is taken on {day_said} - the business is open, but there is "
+                    "nothing left. Say that and ask whether another day would work.")
 
         lines = []
         if data.get("nearestTo"):

@@ -4,8 +4,8 @@ import { checkRateLimit } from "@/lib/rateLimit";
 import { assertTenantLicensed, TenantExpiredError, TenantNotFoundError } from "@/lib/tenants";
 import { availabilityForDay, getSchedulingConfig } from "@/lib/appointments";
 import {
-  daysAhead, formatIstDate, formatIstTime, isStandardDuration, nearestStarts,
-  needsDateConfirmation, parseSpokenTime, utcToIst,
+  daysAhead, formatIstDate, formatIstTime, isStandardDuration, istToUtc,
+  nearestStarts, needsDateConfirmation, parseSpokenTime, utcToIst,
 } from "@/lib/scheduling";
 
 export const runtime = "nodejs";
@@ -83,6 +83,21 @@ export async function POST(req: NextRequest) {
     starts: preferred === null ? starts.slice(0, 3) : nearestStarts(starts, preferred, 3),
   }));
 
+  // Closed and fully booked both arrive as an empty list and are entirely
+  // different things to tell a caller. "Fully booked" sends someone away to try
+  // again for a day that will never have anything.
+  const open = perResource.filter((r) => r.hours !== null);
+  const closed = perResource.length > 0 && open.length === 0;
+
+  // A time the business is simply not open for - also not "taken".
+  const outsideHours =
+    !closed && preferred !== null &&
+    open.every((r) => preferred < r.hours!.opens || preferred + durationMinutes > r.hours!.closes);
+
+  const hoursSpoken = open.length
+    ? `${formatIstTime(istToUtc(dayISO, open[0].hours!.opens))} to ${formatIstTime(istToUtc(dayISO, open[0].hours!.closes))}`
+    : null;
+
   const options = narrowed.flatMap(({ resource, starts }) =>
     starts.map((s) => ({
       resourceId: resource.id,
@@ -104,6 +119,12 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json({
     enabled: true, dayISO, durationMinutes, options, spoken,
+    closed,
+    outsideHours,
+    hoursSpoken,
+    // So the agent can offer who IS here when the caller names someone who
+    // isn't, rather than quietly booking them with a stranger.
+    resourceNames: perResource.map((r) => r.resource.name),
     // Given to the agent rather than left for it to phrase. Unprompted it said
     // "aaravathu September" - the ordinal first - which is not a date anyone can
     // follow at conversational speed.

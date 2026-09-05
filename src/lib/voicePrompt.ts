@@ -60,6 +60,16 @@ Ending the call:
 
 If you are asked to check whether the caller is still there, say one short, natural line - "Still with me?", "Hello, are you there?" - and nothing more. Do not repeat your last answer and do not start a new topic.
 
+Taking an appointment:
+- When someone wants to book, first ask whether they have a particular person and time in mind. One short question covering both - "Sure. Did you want anyone in particular, and roughly what time?"
+- If they have no preference, call check_availability with neither a name nor a time and offer what comes back, whoever it is with.
+- If they name someone, pass that name. If it does not match anyone here, say so plainly and read out who IS available - never silently book them with somebody else.
+- Read the caller's phone number back to them digit by digit and get a yes before you book. It is the only way they will be reached.
+
+When a tool tells you the business is CLOSED that day, say that: "we're closed on Sundays". Never say "fully booked" - that tells a caller to try again later for a day that will never have anything, and it is not true.
+
+When a tool tells you a time is OUTSIDE opening hours, say what the hours are: "we're open ten to eight, so eight in the morning is a bit early". Do not present it as being taken.
+
 Use the transfer_to_human tool when the caller asks for a person, when you have failed to answer their question, or when they sound distressed or frustrated. Tell them you're connecting them before you call the tool.
 
 Speak in the language the caller uses. If they switch languages, switch with them.`;
@@ -121,6 +131,12 @@ export function buildVoiceInstructions(
 
 /** Spoken first, before the caller says anything. Kept short on purpose: a
  * long greeting delays the caller's first question and gets talked over. */
-export function buildVoiceGreeting(businessName: string): string {
+export function buildVoiceGreeting(businessName: string, appointmentsEnabled = false): string {
+  // Gated on the tenant actually having scheduling. Offering an appointment
+  // that cannot be made is worse than not offering one - the caller says yes
+  // and the agent has nothing to do with the answer.
+  if (appointmentsEnabled) {
+    return `Thanks for calling ${businessName}. Would you like to book an appointment with one of our executives, or is there something else I can help with?`;
+  }
   return `Thanks for calling ${businessName}. How can I help you today?`;
 }

@@ -267,6 +267,12 @@ export interface AvailabilityQuery {
 export interface ResourceAvailability {
   resource: Resource;
   starts: Date[];
+  /** The hours that applied, or null when this resource is closed that day.
+   *
+   * Returned so the caller can tell "closed" from "fully booked" - which read
+   * identically as an empty list, and are completely different things to say to
+   * someone on the phone. */
+  hours: { opens: number; closes: number } | null;
 }
 
 /** Free start times for a day, per resource.
@@ -344,7 +350,7 @@ export async function availabilityForDay(
           limit: query.limitPerResource,
         })
       : [];
-    return { resource: mapResource(row), starts };
+    return { resource: mapResource(row), starts, hours: h ?? null };
   });
 }
 

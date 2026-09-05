@@ -88,10 +88,11 @@ export async function POST(req: NextRequest) {
   const scheduling = await getSchedulingConfig(tenant.id);
   const resources = scheduling.enabled ? await listResources(tenant.id) : [];
 
+
   return NextResponse.json({
     tenantId: tenant.id,
     businessName: tenant.name,
-    greeting: buildVoiceGreeting(tenant.name),
+    greeting: buildVoiceGreeting(tenant.name, scheduling.enabled && resources.length > 0),
     instructions: buildVoiceInstructions(tenant.name, tenant.answerConfigMd, new Date()),
     voice: { speaker: voice.speaker, pace: voice.pace, temperature: voice.temperature },
     // Read fresh here on every inbound call, exactly like the voice settings
