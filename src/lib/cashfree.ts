@@ -355,6 +355,27 @@ export interface CreateSubscriptionInput {
   firstChargeAt: Date;
 }
 
+/** What to collect at authorisation.
+ *
+ * Normally the first cycle, so one customer action both pays and mandates.
+ *
+ * CASHFREE_AUTH_AMOUNT overrides it, and exists to answer a specific question:
+ * UPI Autopay authorisations are conventionally a nominal ₹1 registration with
+ * the real money taken as a scheduled charge, so a gateway may hide any mode
+ * that cannot collect a full cycle up front. If setting this to 1 makes UPI
+ * appear on the hosted checkout, the missing mode was this number and not the
+ * merchant account - and the design has to change. If UPI still does not
+ * appear, the account genuinely lacks UPI Autopay and that is a support
+ * request, not a patch.
+ *
+ * An env var rather than a settings row precisely because it is a diagnostic:
+ * it can be flipped on staging without a deploy, and its absence is the
+ * correct production behaviour. */
+function authorizationAmount(fullCycleInr: number): number {
+  const override = Number(process.env.CASHFREE_AUTH_AMOUNT);
+  return Number.isFinite(override) && override > 0 ? override : fullCycleInr;
+}
+
 export async function createSubscription(
   input: CreateSubscriptionInput
 ): Promise<CashfreeSubscription> {
@@ -369,7 +390,7 @@ export async function createSubscription(
       },
       plan_details: { plan_id: input.planId },
       authorization_details: {
-        authorization_amount: input.authorizationAmountInr,
+        authorization_amount: authorizationAmount(input.authorizationAmountInr),
         // FALSE is load-bearing. True would refund the amount straight back and
         // leave the customer mandated but unpaid, with a licensed tenant and no
         // money taken for it.
