@@ -65,6 +65,7 @@ export default function SignupPage() {
   const [plan, setPlan] = useState<PlanChoice>("monthly");
   const [email, setEmail] = useState("");
   const [authorised, setAuthorised] = useState(false);
+  const chosenAmount = plan === "annual" ? annualPrice : price;
   const [payment, setPayment] = useState<PaymentInstructions | null>(null);
   const [result, setResult] = useState<{ phoneNumber: string | null; tenantId: string; licenseState: string } | null>(null);
 
@@ -356,36 +357,83 @@ export default function SignupPage() {
               Everything included, either way. Cancel any time.
             </p>
 
-            <div className="flex flex-col gap-3">
+            {/* A real radio group, not two cards that differ by a tint.
+                Choosing a plan is the one decision on this screen, so the
+                selected state carries a filled control, a 2px border AND a
+                background change - any one of them alone reads as decoration.
+                Native inputs, so arrow keys and screen readers work for free. */}
+            <div role="radiogroup" aria-label="Billing plan" className="flex flex-col gap-3">
               {([
-                { key: "monthly" as const, label: "Monthly", amount: price, per: "/month", note: null },
-                { key: "annual" as const, label: "Annual", amount: annualPrice, per: "/year",
-                  note: savingPct > 0 ? `Save ${savingPct}% against paying monthly` : null },
-              ]).map((option) => (
-                <button
-                  key={option.key}
-                  type="button"
-                  onClick={() => setPlan(option.key)}
-                  aria-pressed={plan === option.key}
-                  className="text-left"
-                  style={{ background: "none", border: "none", padding: 0, cursor: "pointer" }}
-                >
-                  <Card variant="filled" padding={20} selected={plan === option.key}>
-                    <div className="flex items-baseline justify-between">
-                      <span className="kw-title-medium">{option.label}</span>
-                      <span className="kw-headline-small">
-                        ₹{option.amount}
-                        <span className="kw-body-medium">{option.per}</span>
+                { key: "monthly" as const, label: "Monthly", amount: price, per: "per month",
+                  sub: "Billed every month", save: null },
+                { key: "annual" as const, label: "Annual", amount: annualPrice, per: "per year",
+                  sub: "Billed once a year",
+                  save: savingPct > 0 ? `Save ${savingPct}%` : null },
+              ]).map((option) => {
+                const isOn = plan === option.key;
+                return (
+                  <label
+                    key={option.key}
+                    style={{
+                      display: "flex", alignItems: "center", gap: "0.85rem",
+                      padding: "1rem 1.1rem", cursor: "pointer",
+                      borderRadius: "var(--radius-md)",
+                      background: isOn ? "var(--color-primary-container)" : "var(--color-surface)",
+                      border: isOn
+                        ? "2px solid var(--color-primary)"
+                        : "1px solid var(--color-outline-variant)",
+                      // Same total box either way, so selecting does not nudge
+                      // the layout by the extra border pixel.
+                      margin: isOn ? 0 : 1,
+                      transition: "background var(--duration-short), border-color var(--duration-short)",
+                    }}
+                  >
+                    <input
+                      type="radio"
+                      name="plan"
+                      value={option.key}
+                      checked={isOn}
+                      onChange={() => setPlan(option.key)}
+                      style={{ width: "1.2rem", height: "1.2rem", flex: "none",
+                               accentColor: "var(--color-primary)", cursor: "pointer" }}
+                    />
+                    <span style={{ flex: 1, minWidth: 0 }}>
+                      <span className="flex items-center gap-2">
+                        <span className="kw-title-medium"
+                              style={{ color: isOn ? "var(--color-on-primary-container)" : "var(--color-on-surface)" }}>
+                          {option.label}
+                        </span>
+                        {option.save && (
+                          <span
+                            className="kw-body-small"
+                            style={{
+                              background: "var(--color-primary)", color: "var(--color-on-primary)",
+                              borderRadius: "var(--radius-full)", padding: "0.1rem 0.5rem",
+                              fontWeight: 600, whiteSpace: "nowrap",
+                            }}
+                          >
+                            {option.save}
+                          </span>
+                        )}
                       </span>
-                    </div>
-                    {option.note && (
-                      <p className="kw-body-small mt-1" style={{ color: "var(--color-primary)" }}>
-                        {option.note}
-                      </p>
-                    )}
-                  </Card>
-                </button>
-              ))}
+                      <span className="kw-body-small" style={{ display: "block",
+                            color: isOn ? "var(--color-on-primary-container)" : "var(--color-on-surface-variant)" }}>
+                        {option.sub}
+                      </span>
+                    </span>
+                    <span style={{ textAlign: "right", flex: "none" }}>
+                      <span className="kw-title-large" style={{ display: "block", fontWeight: 600,
+                            color: isOn ? "var(--color-on-primary-container)" : "var(--color-on-surface)" }}>
+                        ₹{option.amount.toLocaleString("en-IN")}
+                      </span>
+                      <span className="kw-body-small" style={{
+                            color: isOn ? "var(--color-on-primary-container)" : "var(--color-on-surface-variant)" }}>
+                        {option.per}
+                      </span>
+                    </span>
+                  </label>
+                );
+              })}
             </div>
 
             <ul className="mt-4 flex flex-col gap-1">
@@ -416,7 +464,7 @@ export default function SignupPage() {
                          accentColor: "var(--color-primary)", cursor: "pointer" }}
               />
               <span className="kw-body-small" style={{ color: "var(--color-on-surface-variant)" }}>
-                I authorise MyBizCare to charge ₹{plan === "annual" ? annualPrice : price}{" "}
+                I authorise MyBizCare to charge ₹{chosenAmount.toLocaleString("en-IN")}{" "}
                 {plan === "annual" ? "every year" : "every month"} to this payment method until I
                 cancel. I can cancel any time from my dashboard.
               </span>
@@ -430,7 +478,7 @@ export default function SignupPage() {
                 disabled={busy || !authorised || !/^[^\s@]+@[^\s@]+\.[^\s@]{2,}$/.test(email.trim())}
                 onClick={pay}
               >
-                {busy ? "Please wait…" : `Pay ₹${plan === "annual" ? annualPrice : price}`}
+                {busy ? "Please wait…" : `Pay ₹${chosenAmount.toLocaleString("en-IN")}`}
               </Button>
             </div>
           </>
