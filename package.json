@@ -15,6 +15,7 @@
   "dependencies": {
     "@anthropic-ai/sdk": "^0.112.4",
     "@breezystack/lamejs": "^1.2.7",
+    "@cashfreepayments/cashfree-js": "^1.0.7",
     "dotenv": "^17.4.2",
     "exceljs": "^4.4.0",
     "livekit-server-sdk": "^2.18.0",

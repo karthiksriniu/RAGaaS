@@ -313,25 +313,14 @@ export type SubscriptionStatus =
 
 export interface CashfreeSubscription {
   cf_subscription_id?: string;
+  authorisation_details?: { authorization_status?: string };
+  authorization_details?: { authorization_status?: string };
   subscription_id?: string;
   subscription_status?: SubscriptionStatus;
   /** What the AUTH call needs, and the only reason this response matters. */
   subscription_session_id?: string;
   subscription_first_charge_time?: string;
   next_schedule_date?: string;
-}
-
-export interface SubscriptionPayResponse {
-  cf_payment_id?: string;
-  payment_id?: string;
-  subscription_id?: string;
-  payment_status?: string;
-  payment_type?: string;
-  /** link | collect | qrcode | post - how the customer is meant to be sent on. */
-  channel?: string;
-  action?: string;
-  /** Carries the URL (and for some channels a payload) the customer goes to. */
-  data?: Record<string, unknown> & { url?: string; payload?: Record<string, unknown> };
 }
 
 /** Cashfree wants a bare Indian mobile number, not E.164.
@@ -396,30 +385,6 @@ export async function createSubscription(
   });
 }
 
-/** Starts the authorisation: one customer action that registers the mandate and
- * takes the first cycle's money.
- *
- * `channel: "link"` asks Cashfree for a URL to send the customer to, rather
- * than a collect request to a VPA we would have to ask for ourselves. NOT yet
- * confirmed against a live call - like getPlan's path, it is exercised against
- * the sandbox before anything depends on it. */
-export async function subscriptionAuthPay(input: {
-  subscriptionId: string;
-  paymentId: string;
-  subscriptionSessionId: string;
-}): Promise<SubscriptionPayResponse> {
-  return cashfreeFetch<SubscriptionPayResponse>("/subscriptions/pay", {
-    method: "POST",
-    body: {
-      subscription_id: input.subscriptionId,
-      payment_id: input.paymentId,
-      payment_type: "AUTH",
-      subscription_session_id: input.subscriptionSessionId,
-      payment_method: { upi: { channel: "link" } },
-    },
-  });
-}
-
 /** One full billing period after `from`.
  *
  * Calendar arithmetic via setMonth/setFullYear, not day counts, so 31 Jan + a
@@ -457,5 +422,14 @@ export async function getSubscription(subscriptionId: string): Promise<CashfreeS
  * created but never authorised, which is exactly what an abandoned checkout
  * leaves behind, and treating it as paid would license a tenant for nothing. */
 export function subscriptionIsAuthorised(sub: CashfreeSubscription): boolean {
-  return sub.subscription_status === "ACTIVE";
+  // Two places, because Cashfree's own docs point at the nested
+  // authorization_status while the entity also carries a top-level
+  // subscription_status - and their response spells the parent both
+  // "authorisation_details" and "authorization_details" in different places.
+  // Reading all of them costs nothing; reading the wrong one alone means
+  // either licensing an unpaid tenant or refusing a paid one.
+  const nested =
+    sub.authorisation_details?.authorization_status ??
+    sub.authorization_details?.authorization_status;
+  return sub.subscription_status === "ACTIVE" || nested === "ACTIVE";
 }

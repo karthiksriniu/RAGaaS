@@ -219,9 +219,19 @@ export default function SignupPage() {
       }
 
       if (d.mode === "cashfree") {
-        // Full-page navigation, not a popup: UPI apps hand control back through
-        // the browser, and a popup is where that gets lost.
-        window.location.assign(d.redirectUrl);
+        // Cashfree's own hosted page, where the customer picks how to authorise.
+        // Loaded on demand rather than at module scope so the SDK is fetched
+        // only by someone actually paying, and a CDN hiccup cannot stop the
+        // rest of signup rendering.
+        const { load } = await import("@cashfreepayments/cashfree-js");
+        const cashfree = await load({ mode: d.cfMode === "production" ? "production" : "sandbox" });
+        if (!cashfree) throw new Error("Could not load the payment page. Please try again.");
+        // _self, not _blank: UPI and banking apps hand control back through the
+        // browser, and a popup is where that return gets lost.
+        await cashfree.subscriptionsCheckout({
+          subsSessionId: d.subsSessionId,
+          redirectTarget: "_self",
+        });
         return;
       }
 

@@ -17,7 +17,6 @@ import {
   createSubscription,
   getSubscription,
   onePeriodAfter,
-  subscriptionAuthPay,
   subscriptionIsAuthorised,
   type CashfreeSubscription,
 } from "@/lib/cashfree";
@@ -147,7 +146,10 @@ export async function POST(req: NextRequest) {
     }
 
     const root = process.env.TENANT_ROOT_DOMAIN || "";
-    const returnUrl = `https://${root}/signup?order=${encodeURIComponent(order.id)}`;
+    // An API route, not the page: Cashfree may return the customer by form POST,
+    // and a page route answers GET only. See that route for the full reasoning.
+    const returnUrl =
+      `https://${root}/api/payments/cashfree/return?order=${encodeURIComponent(order.id)}`;
 
     try {
       // An order is reused for as long as it is live, so a second attempt after
@@ -220,39 +222,25 @@ export async function POST(req: NextRequest) {
         );
       }
 
-      const auth = await subscriptionAuthPay({
-        subscriptionId: order.id,
-        // Unique per attempt. A retried authorisation is a NEW payment attempt,
-        // and reusing one id would collide at the gateway exactly as the
-        // subscription id just did.
-        paymentId: `${order.id}A${Date.now().toString(36).toUpperCase()}`,
-        subscriptionSessionId: sessionId,
-      });
-
-      const redirectUrl = typeof auth.data?.url === "string" ? auth.data.url : null;
-      if (!redirectUrl) {
-        console.error("[payment] Cashfree AUTH returned no URL", {
-          channel: auth.channel,
-          action: auth.action,
-          data: auth.data,
-        });
-        return NextResponse.json(
-          {
-            error: "Could not start the payment. Please try again.",
-            ...(cashfreeEnv() === "production"
-              ? {}
-              : { detail: { stage: "auth", channel: auth.channel, action: auth.action, data: auth.data } }),
-          },
-          { status: 502 }
-        );
-      }
-
+      // No AUTH call, and no payment_method: the session goes to Cashfree's own
+      // hosted checkout, where the CUSTOMER picks how to authorise from whatever
+      // this merchant account has enabled.
+      //
+      // Choosing for them server-side is what produced
+      // `payment_mode_invalid_for_action` - we were naming UPI on their behalf,
+      // which is both presumptuous and a mode this account would not accept for
+      // an authorisation. Handing the choice over removes the guess entirely and
+      // degrades gracefully: if UPI Autopay is not enabled, the page simply
+      // offers eNACH or cards instead of erroring.
       return NextResponse.json({
         mode: "cashfree",
         orderId: order.id,
         plan: order.plan,
         amountPaise: order.amountPaise,
-        redirectUrl,
+        subsSessionId: sessionId,
+        // The browser SDK needs to be pointed at the same environment as the
+        // credentials that minted this session.
+        cfMode: cashfreeEnv(),
       });
     } catch (err) {
       // Loud: a payer who cannot pay is the one failure that costs a customer.
