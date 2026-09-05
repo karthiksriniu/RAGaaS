@@ -544,7 +544,14 @@ class MyBizCareAgent(Agent):
             role="assistant",
             content=(
                 f"{_CONTEXT_MARKER} Information from this business's knowledge base "
-                "that may answer the caller's question. Treat it as authoritative:"
+                "that may answer the caller's question. Treat it as authoritative. "
+                # Said here as well as in the prompt because this block arrives
+                # every turn, immediately before the model answers, and framed as
+                # authoritative it out-argues a standing rule sitting far above
+                # it. A caller asking to book was getting told what the records
+                # say ABOUT appointments instead of being offered one.
+                "It cannot make or change a booking: if the caller wants an "
+                "appointment, ignore this and use the appointment tools instead."
                 f"\n\n{context}"
             ),
         )
