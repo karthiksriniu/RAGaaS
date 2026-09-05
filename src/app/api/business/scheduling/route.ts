@@ -1,6 +1,9 @@
 import { NextRequest, NextResponse } from "next/server";
 import { businessTenantId } from "@/lib/businessAuth";
-import { getSchedulingConfig, setSchedulingConfig, listResources, getHours } from "@/lib/appointments";
+import {
+  getSchedulingConfig, setSchedulingConfig, listResources, getHours,
+  getTenantHours, setTenantHours, type ResourceHours,
+} from "@/lib/appointments";
 import { isStandardDuration, STANDARD_DURATIONS } from "@/lib/scheduling";
 
 export const runtime = "nodejs";
@@ -12,9 +15,10 @@ export async function GET(req: NextRequest) {
   const tenantId = businessTenantId(req);
   if (!tenantId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
-  const [config, resources] = await Promise.all([
+  const [config, resources, businessHours] = await Promise.all([
     getSchedulingConfig(tenantId),
     listResources(tenantId, true),
+    getTenantHours(tenantId),
   ]);
   const hours = await Promise.all(
     resources.map(async (r) => ({ resourceId: r.id, hours: await getHours(tenantId, r.id) }))
@@ -23,6 +27,7 @@ export async function GET(req: NextRequest) {
   return NextResponse.json({
     ...config,
     durations: STANDARD_DURATIONS,
+    businessHours,
     resources,
     hours: Object.fromEntries(hours.map((h) => [h.resourceId, h.hours])),
   });
@@ -45,6 +50,24 @@ export async function PATCH(req: NextRequest) {
     patch.defaultMinutes = body.defaultMinutes;
   }
 
+  // Business hours ride along with the config because they are edited on the
+  // same screen; splitting them would let a save half-apply.
+  if (Array.isArray(body.businessHours)) {
+    const hours: ResourceHours[] = [];
+    for (const raw of body.businessHours as unknown[]) {
+      if (!raw || typeof raw !== "object") continue;
+      const h = raw as Record<string, unknown>;
+      if (!Number.isInteger(h.weekday) || !Number.isInteger(h.opensMinute) || !Number.isInteger(h.closesMinute)) continue;
+      const w = h.weekday as number, o = h.opensMinute as number, c = h.closesMinute as number;
+      if (w < 0 || w > 6 || o < 0 || o >= 1440 || c <= o || c > 1740) continue;
+      hours.push({ weekday: w, opensMinute: o, closesMinute: c });
+    }
+    await setTenantHours(tenantId, hours);
+  }
+
   await setSchedulingConfig(tenantId, patch);
-  return NextResponse.json(await getSchedulingConfig(tenantId));
+  return NextResponse.json({
+    ...(await getSchedulingConfig(tenantId)),
+    businessHours: await getTenantHours(tenantId),
+  });
 }

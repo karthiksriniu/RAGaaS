@@ -180,3 +180,20 @@ export function istDaysBetween(fromDayISO: string, toDayISO: string): string[] {
   }
   return out;
 }
+
+/** Which hours apply to a resource on a weekday.
+ *
+ * All-or-nothing per resource: a resource with ANY override rows uses only its
+ * own week, and one with none inherits the business's.
+ *
+ * NOT per-weekday fallback, which reads as more flexible and is a trap. A
+ * stylist working Tuesday to Saturday has five rows and no Sunday row - under
+ * per-weekday fallback that gap would inherit the salon's Sunday hours and book
+ * her on her day off. Absence must keep meaning closed for whoever overrides. */
+export function effectiveHours(
+  hasOverride: boolean,
+  resourceHours: { opens: number; closes: number } | undefined,
+  tenantHours: { opens: number; closes: number } | undefined
+): { opens: number; closes: number } | undefined {
+  return hasOverride ? resourceHours : tenantHours;
+}

@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
+import { AppointmentsTab } from "@/components/AppointmentsTab";
 import { Button } from "@/components/kiowa/Button";
 import { Card } from "@/components/kiowa/Card";
 import { TextField } from "@/components/kiowa/TextField";
@@ -14,7 +15,7 @@ import { ShareableValue } from "@/components/ShareableValue";
 import { ExpertNumberField } from "@/components/ExpertNumberField";
 import { PLAN_FEATURES, UpiPayment, type PaymentInstructions } from "@/components/UpiPayment";
 
-type Section = "agents" | "settings" | "knowledge" | "config";
+type Section = "agents" | "settings" | "knowledge" | "appointments" | "config";
 
 interface Me {
   tenantId: string;
@@ -51,6 +52,7 @@ const NAV: { id: Section; label: string; icon: string }[] = [
   { id: "agents", label: "AI Agents", icon: "smart_toy" },
   { id: "settings", label: "Settings", icon: "settings" },
   { id: "knowledge", label: "Knowledge Sources", icon: "folder" },
+  { id: "appointments", label: "Appointments", icon: "event" },
   { id: "config", label: "Configurations", icon: "tune" },
 ];
 
@@ -518,6 +520,8 @@ export default function BusinessDashboard() {
               )}
             </>
           )}
+
+          {section === "appointments" && <AppointmentsTab />}
 
           {section === "config" && (
             <>

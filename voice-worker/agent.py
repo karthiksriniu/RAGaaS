@@ -107,7 +107,8 @@ class TenantContext:
     """Everything about the tenant whose number was dialed."""
 
     def __init__(self, tenant_id: str, business_name: str, greeting: str, instructions: str,
-                 voice: dict | None = None, expert_phone_number: str | None = None):
+                 voice: dict | None = None, expert_phone_number: str | None = None,
+                 appointments: dict | None = None):
         self.tenant_id = tenant_id
         self.business_name = business_name
         self.greeting = greeting
@@ -127,6 +128,14 @@ class TenantContext:
         self.speaker: str = v.get("speaker") or "priya"
         self.pace: float = float(v.get("pace") or 0.95)
         self.temperature: float = float(v.get("temperature") or 0.8)
+
+        # Scheduling, read fresh from /api/voice/session on every call. .get()
+        # throughout so an older app deployment that does not send this yet
+        # simply means "no booking", rather than breaking the call.
+        a = appointments or {}
+        self.appointments_enabled: bool = bool(a.get("enabled"))
+        self.appointment_minutes: int = int(a.get("defaultMinutes") or 30)
+        self.resources: list[dict] = list(a.get("resources") or [])
 
 
 def _normalize_e164(raw: str) -> str:
@@ -216,6 +225,7 @@ async def _fetch_tenant(http: aiohttp.ClientSession, dialed: str) -> TenantConte
         instructions=data["instructions"],
         voice=data.get("voice"),
         expert_phone_number=data.get("expertPhoneNumber"),
+        appointments=data.get("appointments"),
     )
 
 
@@ -494,6 +504,164 @@ class MyBizCareAgent(Agent):
         return "Transfer completed."
 
 
+
+class SchedulingAgent(MyBizCareAgent):
+    """MyBizCareAgent plus booking, for tenants that have appointments on.
+
+    A SUBCLASS rather than a flag inside the tools, because a tool the model can
+    see is a tool it will eventually offer. A salon with no chairs configured
+    must not be able to promise anyone an appointment, and the cheapest way to
+    guarantee that is for the tool not to exist on the object.
+    """
+
+    def __init__(self, http: aiohttp.ClientSession, tenant: TenantContext):
+        super().__init__(http, tenant)
+        # What check_availability last read out. book_appointment resolves the
+        # caller's choice against this rather than asking the model to echo an
+        # ISO timestamp back - models mangle those, and a mangled timestamp is a
+        # booking at the wrong hour that everyone believes is correct.
+        self._offered: list[dict] = []
+
+    def _resource_by_name(self, name: str | None) -> dict | None:
+        """Loose match on a spoken name. Returns None when it is ambiguous or
+        absent, so the caller is asked rather than guessed at."""
+        if not name:
+            return None
+        wanted = name.strip().casefold()
+        if not wanted:
+            return None
+        exact = [r for r in self._tenant.resources if r.get("name", "").casefold() == wanted]
+        if exact:
+            return exact[0]
+        partial = [r for r in self._tenant.resources if wanted in r.get("name", "").casefold()]
+        return partial[0] if len(partial) == 1 else None
+
+    @function_tool
+    async def check_availability(
+        self, ctx: RunContext, day: str | None = None, resource_name: str | None = None
+    ) -> str:
+        """Find free appointment times for this business.
+
+        Args:
+            day: The date the caller asked for, as YYYY-MM-DD. Omit for today.
+            resource_name: The person, table or doctor they asked for, if they named one.
+        """
+        resource = self._resource_by_name(resource_name)
+        payload: dict = {
+            "tenantId": self._tenant.tenant_id,
+            "durationMinutes": self._tenant.appointment_minutes,
+        }
+        if day:
+            payload["dayISO"] = day
+        if resource:
+            payload["resourceId"] = resource["id"]
+
+        try:
+            async with self._http.post(
+                f"{BASE_URL}/api/voice/appointments/availability",
+                json=payload,
+                headers={"Authorization": f"Bearer {VOICE_WORKER_TOKEN}"},
+                timeout=aiohttp.ClientTimeout(total=RETRIEVE_TIMEOUT_S),
+            ) as res:
+                if res.status != 200:
+                    logger.error("availability returned %s: %s", res.status, await res.text())
+                    return ("Could not check the diary just now. Tell the caller you cannot see "
+                            "the schedule and offer to transfer them to a person.")
+                data = await res.json()
+        except Exception:
+            logger.exception("availability errored")
+            return ("Could not check the diary just now. Tell the caller you cannot see the "
+                    "schedule and offer to transfer them to a person.")
+
+        self._offered = data.get("options") or []
+        if not self._offered:
+            return ("Nothing is free then. Tell the caller that time is fully booked and ask "
+                    "whether another day would work.")
+
+        return (
+            "These times are free. Offer them to the caller in your own words, then call "
+            "book_appointment with the one they choose. Do not invent other times.\n\n"
+            + (data.get("spoken") or "")
+        )
+
+    @function_tool
+    async def book_appointment(
+        self,
+        ctx: RunContext,
+        time_offered: str,
+        customer_phone: str,
+        customer_name: str | None = None,
+        resource_name: str | None = None,
+        party_size: int = 1,
+        service: str | None = None,
+    ) -> str:
+        """Book one of the times check_availability just offered.
+
+        Only call this AFTER reading the caller's phone number back to them and
+        hearing them confirm it.
+
+        Args:
+            time_offered: The chosen time, exactly as it was offered, e.g. "5:30 pm".
+            customer_phone: The caller's number, as they confirmed it.
+            customer_name: Their name, if they gave one.
+            resource_name: The person or table, if the caller chose one.
+            party_size: How many people, for a table booking.
+            service: What they are coming for, in a few words.
+        """
+        if not self._offered:
+            return ("No times have been offered yet. Call check_availability first and offer "
+                    "the caller a time before booking.")
+
+        wanted = (time_offered or "").strip().casefold()
+        resource = self._resource_by_name(resource_name)
+        matches = [
+            o for o in self._offered
+            if o.get("spoken", "").casefold() == wanted
+            and (resource is None or o.get("resourceId") == resource["id"])
+        ]
+        if not matches:
+            return (f"'{time_offered}' was not one of the times offered. Read the available "
+                    "times out again and ask the caller to pick one of them.")
+        chosen = matches[0]
+
+        try:
+            async with self._http.post(
+                f"{BASE_URL}/api/voice/appointments/book",
+                json={
+                    "tenantId": self._tenant.tenant_id,
+                    "resourceId": chosen["resourceId"],
+                    "startsAt": chosen["startsAt"],
+                    "durationMinutes": self._tenant.appointment_minutes,
+                    "customerPhone": customer_phone,
+                    "customerName": customer_name,
+                    "partySize": party_size,
+                    "service": service,
+                },
+                headers={"Authorization": f"Bearer {VOICE_WORKER_TOKEN}"},
+                timeout=aiohttp.ClientTimeout(total=RETRIEVE_TIMEOUT_S),
+            ) as res:
+                # 409 is the slot going while we were talking - a normal outcome
+                # of a busy diary, not a fault. Say so plainly and re-offer.
+                if res.status == 409:
+                    self._offered = []
+                    return ("That time was just taken by someone else. Apologise, call "
+                            "check_availability again, and offer what is left.")
+                if res.status != 200:
+                    logger.error("book returned %s: %s", res.status, await res.text())
+                    return ("The booking could not be saved. Apologise, do NOT tell the caller "
+                            "it is confirmed, and offer to transfer them to a person.")
+                data = await res.json()
+        except Exception:
+            logger.exception("book errored")
+            return ("The booking could not be saved. Apologise, do NOT tell the caller it is "
+                    "confirmed, and offer to transfer them to a person.")
+
+        self._offered = []
+        who = chosen.get("resourceName") or ""
+        return (f"Booked for {data.get('spoken')}{' with ' + who if who else ''}. "
+                "Confirm it back to the caller in one short sentence.")
+
+
 async def entrypoint(ctx: JobContext) -> None:
     # One session for every request this worker makes, so connections are
     # pooled — a fresh TCP+TLS handshake per lookup would land directly in the
@@ -596,7 +764,10 @@ async def entrypoint(ctx: JobContext) -> None:
                 silence_timer.cancel()
                 silence_timer = None
 
-    agent = MyBizCareAgent(http, tenant)
+    # The subclass carries the booking tools; the base class does not have them
+    # at all, so a tenant without appointments cannot be offered one.
+    agent_cls = SchedulingAgent if tenant.appointments_enabled else MyBizCareAgent
+    agent = agent_cls(http, tenant)
 
     # Kick the knowledge-base lookup off from partial transcripts, so most of
     # its round trip happens while the caller is still speaking rather than

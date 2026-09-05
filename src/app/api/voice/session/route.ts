@@ -3,6 +3,7 @@ import { timingSafeEqual } from "node:crypto";
 import { getTenantByVoiceNumber } from "@/lib/tenants";
 import { buildVoiceInstructions, buildVoiceGreeting } from "@/lib/voicePrompt";
 import { resolveVoicePreset } from "@/lib/voicePresets";
+import { getSchedulingConfig, listResources } from "@/lib/appointments";
 
 export const runtime = "nodejs";
 
@@ -78,6 +79,15 @@ export async function POST(req: NextRequest) {
   // the dashboard takes effect on its NEXT call - no worker redeploy.
   const voice = resolveVoicePreset(tenant.voicePreset);
 
+  // Scheduling travels with the session for the same reason the voice does:
+  // read fresh per call, so enabling appointments or adding a stylist in the
+  // dashboard applies to the very next call with no worker redeploy.
+  //
+  // The resources come along too, so the agent can offer names and book by id
+  // without a second round trip mid-call.
+  const scheduling = await getSchedulingConfig(tenant.id);
+  const resources = scheduling.enabled ? await listResources(tenant.id) : [];
+
   return NextResponse.json({
     tenantId: tenant.id,
     businessName: tenant.name,
@@ -89,5 +99,12 @@ export async function POST(req: NextRequest) {
     // very next call with no worker redeploy. Null means "fall back to the
     // worker's EXPERT_PHONE_NUMBER" rather than "transfer is off".
     expertPhoneNumber: tenant.expertPhoneNumber,
+    appointments: {
+      enabled: scheduling.enabled && resources.length > 0,
+      defaultMinutes: scheduling.defaultMinutes,
+      resources: resources.map((r) => ({
+        id: r.id, name: r.name, kind: r.kind, capacity: r.capacity,
+      })),
+    },
   });
 }

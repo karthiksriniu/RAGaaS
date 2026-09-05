@@ -3,6 +3,7 @@ import { pool, withTenant } from "@/lib/db";
 import {
   SLOT_MINUTES,
   availableStarts,
+  effectiveHours,
   istToUtc,
   istWeekday,
   openSlotCount,
@@ -146,6 +147,32 @@ export async function setHours(tenantId: string, resourceId: string, hours: Reso
   });
 }
 
+/** The business's own opening hours - the default every resource inherits. */
+export async function getTenantHours(tenantId: string): Promise<ResourceHours[]> {
+  return withTenant(tenantId, async (c) => {
+    const res = await c.query<{ weekday: number; opens_minute: number; closes_minute: number }>(
+      "SELECT weekday, opens_minute, closes_minute FROM tenant_hours ORDER BY weekday"
+    );
+    return res.rows.map((r) => ({
+      weekday: r.weekday, opensMinute: r.opens_minute, closesMinute: r.closes_minute,
+    }));
+  });
+}
+
+export async function setTenantHours(tenantId: string, hours: ResourceHours[]): Promise<void> {
+  await withTenant(tenantId, async (c) => {
+    await c.query("DELETE FROM tenant_hours WHERE tenant_id = $1", [tenantId]);
+    for (const h of hours) {
+      if (h.closesMinute <= h.opensMinute) continue;
+      await c.query(
+        `INSERT INTO tenant_hours (tenant_id, weekday, opens_minute, closes_minute)
+         VALUES ($1, $2, $3, $4)`,
+        [tenantId, h.weekday, h.opensMinute, h.closesMinute]
+      );
+    }
+  });
+}
+
 export interface BookingRequest {
   resourceId: string;
   startsAt: Date;
@@ -256,7 +283,7 @@ export async function availabilityForDay(
   const from = istToUtc(query.dayISO, -SLOT_MINUTES * 4);
   const to = istToUtc(query.dayISO, 1440 + SLOT_MINUTES * 8);
 
-  const { resources, hours, taken } = await withTenant(tenantId, async (c) => {
+  const { resources, hours, taken, overrides, tenantHours } = await withTenant(tenantId, async (c) => {
     const resRows = await c.query<ResourceRow>(
       `SELECT id, name, kind, capacity, active, sort_order FROM resources
         WHERE active AND ($1::text IS NULL OR id = $1) ORDER BY sort_order, name`,
@@ -266,14 +293,30 @@ export async function availabilityForDay(
       `SELECT resource_id, opens_minute, closes_minute FROM resource_hours WHERE weekday = $1`,
       [weekday]
     );
+    // Which resources override at all - not which override today. See
+    // effectiveHours for why that distinction is load-bearing.
+    const overrideRows = await c.query<{ resource_id: string }>(
+      "SELECT DISTINCT resource_id FROM resource_hours"
+    );
+    const tenantHourRows = await c.query<{ opens_minute: number; closes_minute: number }>(
+      "SELECT opens_minute, closes_minute FROM tenant_hours WHERE weekday = $1",
+      [weekday]
+    );
     const takenRows = await c.query<{ resource_id: string; slot_start: string }>(
       `SELECT resource_id, slot_start FROM appointment_slots
         WHERE slot_start >= $1 AND slot_start < $2`,
       [from.toISOString(), to.toISOString()]
     );
-    return { resources: resRows.rows, hours: hourRows.rows, taken: takenRows.rows };
+    return {
+      resources: resRows.rows, hours: hourRows.rows, taken: takenRows.rows,
+      overrides: overrideRows.rows, tenantHours: tenantHourRows.rows[0],
+    };
   });
 
+  const overrideIds = new Set(overrides.map((o) => o.resource_id));
+  const businessHours = tenantHours
+    ? { opens: tenantHours.opens_minute, closes: tenantHours.closes_minute }
+    : undefined;
   const hoursBy = new Map(hours.map((h) => [h.resource_id, h]));
   const takenBy = new Map<string, Set<number>>();
   for (const t of taken) {
@@ -282,14 +325,19 @@ export async function availabilityForDay(
   }
 
   return resources.map((row) => {
-    const h = hoursBy.get(row.id);
-    // No hours row for this weekday means closed, which is the whole reason
-    // absence is the encoding - there is no flag here that can disagree.
+    const own = hoursBy.get(row.id);
+    // No applicable hours means closed - the whole reason absence is the
+    // encoding, so there is no flag here that can disagree with the times.
+    const h = effectiveHours(
+      overrideIds.has(row.id),
+      own ? { opens: own.opens_minute, closes: own.closes_minute } : undefined,
+      businessHours
+    );
     const starts = h
       ? availableStarts({
           dayISO: query.dayISO,
-          opensMinute: h.opens_minute,
-          closesMinute: h.closes_minute,
+          opensMinute: h.opens,
+          closesMinute: h.closes,
           durationMinutes: query.durationMinutes,
           takenSlotMs: takenBy.get(row.id) ?? new Set(),
           now: query.now,
@@ -345,7 +393,7 @@ export async function utilisationFor(tenantId: string, opts: {
   const from = istToUtc(opts.days[0], 0);
   const to = istToUtc(opts.days[opts.days.length - 1], 1440);
 
-  const { resources, hours, taken } = await withTenant(tenantId, async (c) => {
+  const { resources, hours, taken, tenantHours } = await withTenant(tenantId, async (c) => {
     const resRows = await c.query<ResourceRow>(
       `SELECT id, name, kind, capacity, active, sort_order FROM resources
         WHERE active ORDER BY sort_order, name`
@@ -353,15 +401,20 @@ export async function utilisationFor(tenantId: string, opts: {
     const hourRows = await c.query<{ resource_id: string; weekday: number; opens_minute: number; closes_minute: number }>(
       "SELECT resource_id, weekday, opens_minute, closes_minute FROM resource_hours"
     );
+    const tenantHourRows = await c.query<{ weekday: number; opens_minute: number; closes_minute: number }>(
+      "SELECT weekday, opens_minute, closes_minute FROM tenant_hours"
+    );
     const takenRows = await c.query<{ resource_id: string; n: string }>(
       `SELECT resource_id, count(*)::text AS n FROM appointment_slots
         WHERE slot_start >= $1 AND slot_start < $2 GROUP BY resource_id`,
       [from.toISOString(), to.toISOString()]
     );
-    return { resources: resRows.rows, hours: hourRows.rows, taken: takenRows.rows };
+    return { resources: resRows.rows, hours: hourRows.rows, taken: takenRows.rows,
+             tenantHours: tenantHourRows.rows };
   });
 
   const bookedBy = new Map(taken.map((t) => [t.resource_id, Number(t.n)]));
+  const businessWeek = new Map(tenantHours.map((h) => [h.weekday, { opens: h.opens_minute, closes: h.closes_minute }]));
   const hoursBy = new Map<string, Map<number, { opens: number; closes: number }>>();
   for (const h of hours) {
     if (!hoursBy.has(h.resource_id)) hoursBy.set(h.resource_id, new Map());
@@ -372,7 +425,7 @@ export async function utilisationFor(tenantId: string, opts: {
     const week = hoursBy.get(row.id);
     let openSlots = 0;
     for (const day of opts.days) {
-      const h = week?.get(istWeekday(day));
+      const h = effectiveHours(Boolean(week), week?.get(istWeekday(day)), businessWeek.get(istWeekday(day)));
       if (h) openSlots += openSlotCount(h.opens, h.closes);
     }
     const bookedSlots = bookedBy.get(row.id) ?? 0;

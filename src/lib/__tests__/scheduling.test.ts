@@ -10,6 +10,7 @@ import {
   availableStarts,
   formatIstTime,
   utilisation,
+  effectiveHours,
   openSlotCount,
   istDaysBetween,
 } from "../scheduling";
@@ -248,5 +249,32 @@ describe("durations", () => {
 
   it("keeps the grid the smallest standard duration", () => {
     expect(SLOT_MINUTES).toBe(15);
+  });
+});
+
+// The rule effectiveHours encodes looks wrong until you see the case it
+// protects, so it is pinned here.
+
+describe("effectiveHours", () => {
+  const salon = { opens: 600, closes: 1200 };   // 10-8, every day
+  const stylist = { opens: 660, closes: 1020 }; // 11-5 on the days she works
+
+  it("inherits the business hours when a resource sets none", () => {
+    expect(effectiveHours(false, undefined, salon)).toEqual(salon);
+  });
+
+  it("prefers the resource's own hours when it overrides", () => {
+    expect(effectiveHours(true, stylist, salon)).toEqual(stylist);
+  });
+
+  // The case the all-or-nothing rule exists for. A stylist who works Tuesday
+  // to Saturday has no Sunday row. Per-weekday fallback would inherit the
+  // salon's Sunday hours and book her on her day off.
+  it("keeps a resource closed on a day it has no row for, rather than inheriting", () => {
+    expect(effectiveHours(true, undefined, salon)).toBeUndefined();
+  });
+
+  it("is closed when neither the business nor the resource says otherwise", () => {
+    expect(effectiveHours(false, undefined, undefined)).toBeUndefined();
   });
 });
