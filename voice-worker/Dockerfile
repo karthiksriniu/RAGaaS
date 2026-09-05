@@ -15,6 +15,10 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 COPY agent.py .
+# lang.py is imported by agent.py at module scope. Copied explicitly because
+# this Dockerfile lists files rather than the directory - omit it and the image
+# builds cleanly and every call dies on ImportError.
+COPY lang.py .
 
 # Downloads the silero VAD weights at build time so the first call doesn't pay
 # for it, and so a cold start can't be blocked by a model-download failure.

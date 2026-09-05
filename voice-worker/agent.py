@@ -24,6 +24,8 @@ import os
 import sys
 
 import aiohttp
+
+from lang import detect_language_code
 from dotenv import load_dotenv
 from livekit.agents import (
     Agent,
@@ -289,6 +291,9 @@ class MyBizCareAgent(Agent):
         )
         self._http = http
         self._tenant = tenant
+        # Mirrors the target_language_code the TTS was constructed with. The
+        # greeting is English, so that is where every call starts.
+        self._tts_language = "en-IN"
         # A knowledge-base lookup started from a partial transcript, so the
         # ~0.7s round trip overlaps the caller still talking instead of being
         # added on after they stop. Holds (query, task).
@@ -302,6 +307,23 @@ class MyBizCareAgent(Agent):
         # knowledge-base-unreachable branch, so the agent told every caller it
         # could not access that information while retrieval was in fact fine.
         self._speculative: tuple[str, asyncio.Task[str]] | None = None
+
+    def _sync_tts_language(self, text: str) -> None:
+        """Point the voice at the language the caller is actually speaking.
+
+        Never raises: a failed switch must leave the call running in the
+        previous language, because the alternative is the silence this exists to
+        fix.
+        """
+        code = detect_language_code(text, self._tts_language)
+        if code == self._tts_language:
+            return
+        try:
+            self.session.tts.update_options(target_language_code=code)
+            logger.info("switching voice to %s", code)
+            self._tts_language = code
+        except Exception:
+            logger.exception("could not switch TTS language to %s", code)
 
     async def on_enter(self) -> None:
         self.session.say(self._tenant.greeting)
@@ -389,6 +411,11 @@ class MyBizCareAgent(Agent):
         the call must never fail because retrieval did.
         """
         question = (new_message.text_content or "").strip()
+
+        # BEFORE the length check below, deliberately. A one-word Tamil "yes" is
+        # still Tamil, and the reply to it has to be speakable.
+        self._sync_tts_language(question)
+
         if len(question) < 3:
             return  # "yes", "ok" - nothing to look up
 

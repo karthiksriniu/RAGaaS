@@ -342,29 +342,42 @@ export function AppointmentsTab() {
             const overrides = own.length > 0;
             return (
               <Card key={r.id} variant="outlined" padding={16}>
-                <div className="flex items-center gap-3 flex-wrap">
-                  <TextField
-                    value={r.name}
-                    onChange={(e) => setResources((rs) => rs.map((x) => x.id === r.id ? { ...x, name: e.target.value } : x))}
-                    style={{ flex: "1 1 160px" }}
-                  />
-                  <div style={{ width: 130 }}>
-                    <Select value={r.kind} options={KINDS}
+                {/* Every control is labelled and fullWidth inside a sized box.
+                    TextField is inline-flex with its own minWidth by default,
+                    so an unlabelled field beside labelled ones sits at a
+                    different height and a fixed-width wrapper gets overrun by
+                    the field's own minimum - which is what put "Seats" on top
+                    of the type dropdown. */}
+                <div style={{ display: "flex", gap: ".75rem", alignItems: "flex-end", flexWrap: "wrap" }}>
+                  <div style={{ flex: "2 1 180px", minWidth: 0 }}>
+                    <TextField
+                      label="Name" fullWidth value={r.name}
+                      onChange={(e) => setResources((rs) => rs.map((x) => x.id === r.id ? { ...x, name: e.target.value } : x))}
+                    />
+                  </div>
+                  <div style={{ flex: "1 1 130px", minWidth: 0 }}>
+                    <Select label="Type" value={r.kind} options={KINDS}
+                      style={{ width: "100%" }}
                       onChange={(v) => patchResource(r.id, { kind: v })} />
                   </div>
-                  <div style={{ width: 110 }}>
+                  <div style={{ flex: "0 1 100px", minWidth: 0 }}>
                     <TextField
-                      label="Seats" type="number" value={String(r.capacity)}
+                      label="Seats" type="number" fullWidth value={String(r.capacity)}
                       onChange={(e) => setResources((rs) => rs.map((x) => x.id === r.id ? { ...x, capacity: Number(e.target.value) || 1 } : x))}
                     />
                   </div>
-                  <Button variant="text" disabled={saving}
-                    onClick={() => patchResource(r.id, { name: r.name, capacity: r.capacity })}>
-                    Save
-                  </Button>
+                </div>
+
+                {/* Actions on their own row, so they neither stretch to the
+                    height of a text field nor wrap unpredictably between one. */}
+                <div className="mt-2" style={{ display: "flex", gap: ".5rem", justifyContent: "flex-end" }}>
                   <Button variant="text" disabled={saving}
                     onClick={() => patchResource(r.id, { active: !r.active })}>
                     {r.active ? "Deactivate" : "Reactivate"}
+                  </Button>
+                  <Button variant="filled" disabled={saving}
+                    onClick={() => patchResource(r.id, { name: r.name, capacity: r.capacity })}>
+                    Save
                   </Button>
                 </div>
 
@@ -400,14 +413,17 @@ export function AppointmentsTab() {
           })}
         </div>
 
-        <div className="mt-4 flex items-end gap-3 flex-wrap">
-          <TextField label="Name" value={newName} onChange={(e) => setNewName(e.target.value)}
-            placeholder="Priya, or Table 1" style={{ flex: "1 1 180px" }} />
-          <div style={{ width: 130 }}>
-            <Select label="Type" value={newKind} options={KINDS} onChange={setNewKind} />
+        <div className="mt-5" style={{ display: "flex", gap: ".75rem", alignItems: "flex-end", flexWrap: "wrap" }}>
+          <div style={{ flex: "2 1 180px", minWidth: 0 }}>
+            <TextField label="Name" fullWidth value={newName}
+              onChange={(e) => setNewName(e.target.value)} placeholder="Priya, or Table 1" />
           </div>
-          <div style={{ width: 110 }}>
-            <TextField label="Seats" type="number" value={newCapacity}
+          <div style={{ flex: "1 1 130px", minWidth: 0 }}>
+            <Select label="Type" value={newKind} options={KINDS}
+              style={{ width: "100%" }} onChange={setNewKind} />
+          </div>
+          <div style={{ flex: "0 1 100px", minWidth: 0 }}>
+            <TextField label="Seats" type="number" fullWidth value={newCapacity}
               onChange={(e) => setNewCapacity(e.target.value)} />
           </div>
           <Button variant="filled" disabled={saving || !newName.trim()} onClick={addResource}>Add</Button>
