@@ -15,8 +15,11 @@ import {
   CashfreeApiError,
   cashfreeEnv,
   createSubscription,
+  getSubscription,
   onePeriodAfter,
   subscriptionAuthPay,
+  subscriptionIsAuthorised,
+  type CashfreeSubscription,
 } from "@/lib/cashfree";
 
 /** Cashfree's own words, but only away from production.
@@ -147,35 +150,82 @@ export async function POST(req: NextRequest) {
     const returnUrl = `https://${root}/signup?order=${encodeURIComponent(order.id)}`;
 
     try {
-      const subscription = await createSubscription({
-        subscriptionId: order.id,
-        planId,
-        customerName: body.businessName?.toString().trim().slice(0, 100) || "MyBizCare customer",
-        customerEmail: email!,
-        customerPhone: order.mobile,
-        // The first cycle, collected at authorisation and not refunded. Taken
-        // from the ORDER, which was priced from the plan, so the amount
-        // authorised is the amount displayed.
-        authorizationAmountInr: Math.round(order.amountPaise / 100),
-        returnUrl,
-        // One full period out. The authorisation above already collects cycle
-        // one; scheduling the first periodic charge for "now" would bill the
-        // customer twice in their first week.
-        firstChargeAt: onePeriodAfter(new Date(), plan),
-      });
+      // An order is reused for as long as it is live, so a second attempt after
+      // a failure lands here with a subscription ALREADY created at Cashfree -
+      // recreating it under the same subscription_id is refused with
+      // `subscription_already_exists`, which then masks whatever actually went
+      // wrong the first time. So creation happens only once per order.
+      let sessionId = order.cfPaymentSessionId;
 
-      const sessionId = subscription.subscription_session_id;
-      if (!sessionId) throw new Error("Cashfree returned no subscription_session_id");
+      if (!sessionId) {
+        let subscription: CashfreeSubscription;
+        try {
+          subscription = await createSubscription({
+            subscriptionId: order.id,
+            planId,
+            customerName: body.businessName?.toString().trim().slice(0, 100) || "MyBizCare customer",
+            customerEmail: email!,
+            customerPhone: order.mobile,
+            // The first cycle, collected at authorisation and not refunded.
+            // Taken from the ORDER, which was priced from the plan, so the
+            // amount authorised is the amount displayed.
+            authorizationAmountInr: Math.round(order.amountPaise / 100),
+            returnUrl,
+            // One full period out. The authorisation above already collects
+            // cycle one; scheduling the first periodic charge for "now" would
+            // bill the customer twice in their first week.
+            firstChargeAt: onePeriodAfter(new Date(), plan),
+          });
+        } catch (err) {
+          // Created by an earlier attempt whose session we never stored. Adopt
+          // it rather than failing: the customer has one subscription either
+          // way, and a new id would orphan the old one at the gateway.
+          if (err instanceof CashfreeApiError && err.code === "subscription_already_exists") {
+            console.warn(`[payment] adopting existing Cashfree subscription for order ${order.id}`);
+            subscription = await getSubscription(order.id);
+          } else {
+            throw err;
+          }
+        }
 
-      await attachCashfreeToOrder({
-        id: order.id,
-        cfSubscriptionId: subscription.cf_subscription_id ?? null,
-        cfPaymentSessionId: sessionId,
-      });
+        // The money is already in - an authorisation that succeeded while we
+        // were failing to hear about it. Confirm rather than charging again.
+        if (subscriptionIsAuthorised(subscription)) {
+          console.log(`[payment] order ${order.id} was already authorised at Cashfree`);
+          const confirmed = await confirmOrder(order.id, "cashfree-adopted");
+          return NextResponse.json({
+            mode: "paid",
+            orderId: confirmed.id,
+            plan: confirmed.plan,
+            status: confirmed.status,
+          });
+        }
+
+        sessionId = subscription.subscription_session_id ?? null;
+        await attachCashfreeToOrder({
+          id: order.id,
+          cfSubscriptionId: subscription.cf_subscription_id ?? null,
+          cfPaymentSessionId: sessionId,
+        });
+      }
+
+      if (!sessionId) {
+        // Adopted a subscription whose session Cashfree will not reissue. The
+        // order expires with its QR window and the next attempt gets a fresh
+        // id, so this heals itself rather than needing intervention.
+        console.error(`[payment] no session id available for order ${order.id}`);
+        return NextResponse.json(
+          { error: "This payment has expired. Please start again in a few minutes." },
+          { status: 409 }
+        );
+      }
 
       const auth = await subscriptionAuthPay({
         subscriptionId: order.id,
-        paymentId: `${order.id}-AUTH`,
+        // Unique per attempt. A retried authorisation is a NEW payment attempt,
+        // and reusing one id would collide at the gateway exactly as the
+        // subscription id just did.
+        paymentId: `${order.id}A${Date.now().toString(36).toUpperCase()}`,
         subscriptionSessionId: sessionId,
       });
 

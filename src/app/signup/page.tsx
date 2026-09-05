@@ -211,6 +211,13 @@ export default function SignupPage() {
         businessName,
       });
 
+      // Already authorised at the gateway - the money is in, so there is
+      // nothing to redirect to.
+      if (d.mode === "paid") {
+        setStep("paid");
+        return finishSignup(d.orderId);
+      }
+
       if (d.mode === "cashfree") {
         // Full-page navigation, not a popup: UPI apps hand control back through
         // the browser, and a popup is where that gets lost.
