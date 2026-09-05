@@ -242,6 +242,79 @@ export async function bookAppointment(tenantId: string, req: BookingRequest): Pr
   }
 }
 
+export type RescheduleResult =
+  | { ok: true; appointment: Appointment }
+  | { ok: false; reason: "taken" | "not_found" };
+
+/** Moves a booking to another person, another time, or both.
+ *
+ * The slot rows are deleted and rewritten inside ONE transaction, so the
+ * appointment never collides with its own old slots, and a clash with somebody
+ * else's booking rolls the whole thing back - the same primary key doing the
+ * same job as it does for a new booking. Editing must not be a way around the
+ * guard that stops double-booking. */
+export async function rescheduleAppointment(tenantId: string, id: string, patch: {
+  resourceId?: string;
+  startsAt?: Date;
+  durationMinutes?: number;
+  customerName?: string | null;
+  service?: string | null;
+}): Promise<RescheduleResult> {
+  try {
+    const appointment = await withTenant(tenantId, async (c) => {
+      const cur = await c.query<{
+        resource_id: string; starts_at: string; duration_minutes: number; status: string;
+      }>(
+        "SELECT resource_id, starts_at, duration_minutes, status FROM appointments WHERE id = $1 AND tenant_id = $2",
+        [id, tenantId]
+      );
+      if (!cur.rows[0] || cur.rows[0].status !== "booked") return null;
+
+      const resourceId = patch.resourceId ?? cur.rows[0].resource_id;
+      const startsAt = patch.startsAt ?? new Date(cur.rows[0].starts_at);
+      const durationMinutes = patch.durationMinutes ?? cur.rows[0].duration_minutes;
+
+      const res = await c.query<{
+        id: string; resource_id: string; starts_at: string; duration_minutes: number;
+        customer_name: string | null; customer_phone: string; party_size: number;
+        service: string | null; notes: string | null; status: string; source: string; created_at: string;
+      }>(
+        `UPDATE appointments
+            SET resource_id = $3, starts_at = $4, duration_minutes = $5,
+                customer_name = coalesce($6, customer_name),
+                service = coalesce($7, service)
+          WHERE id = $1 AND tenant_id = $2
+          RETURNING *`,
+        [id, tenantId, resourceId, startsAt.toISOString(), durationMinutes,
+         patch.customerName ?? null, patch.service ?? null]
+      );
+
+      // Old slots out, new slots in, same transaction. Deleting first is what
+      // lets a booking move by fifteen minutes without colliding with itself.
+      await c.query("DELETE FROM appointment_slots WHERE appointment_id = $1", [id]);
+      await c.query(
+        `INSERT INTO appointment_slots (tenant_id, appointment_id, resource_id, slot_start)
+         SELECT $1, $2, $3, unnest($4::timestamptz[])`,
+        [tenantId, id, resourceId,
+         slotStartsFor(startsAt, durationMinutes).map((d) => d.toISOString())]
+      );
+
+      const r = res.rows[0];
+      return {
+        id: r.id, resourceId: r.resource_id, startsAt: r.starts_at,
+        durationMinutes: r.duration_minutes, customerName: r.customer_name,
+        customerPhone: r.customer_phone, partySize: r.party_size, service: r.service,
+        notes: r.notes, status: r.status, source: r.source, createdAt: r.created_at,
+      } satisfies Appointment;
+    });
+    if (!appointment) return { ok: false, reason: "not_found" };
+    return { ok: true, appointment };
+  } catch (err) {
+    if ((err as { code?: string }).code === UNIQUE_VIOLATION) return { ok: false, reason: "taken" };
+    throw err;
+  }
+}
+
 /** Cancelling frees the grid by DELETING the slot rows - the appointment row
  * stays for the record. */
 export async function cancelAppointment(tenantId: string, id: string): Promise<boolean> {

@@ -2,6 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { businessTenantId } from "@/lib/businessAuth";
 import {
   bookAppointment, cancelAppointment, listAppointments, utilisationFor, getSchedulingConfig,
+  rescheduleAppointment,
 } from "@/lib/appointments";
 import { isOnGrid, isStandardDuration, istDaysBetween, utcToIst } from "@/lib/scheduling";
 import { normalizeMobile } from "@/lib/mobile";
@@ -65,6 +66,42 @@ export async function POST(req: NextRequest) {
   });
 
   if (!result.ok) return NextResponse.json({ error: "That slot has just been taken" }, { status: 409 });
+  return NextResponse.json({ appointment: result.appointment });
+}
+
+/** Move a booking to another person or another time.
+ *
+ * Goes through the same slot guard as a new booking, so editing cannot be used
+ * to put two people in the same chair. */
+export async function PATCH(req: NextRequest) {
+  const tenantId = businessTenantId(req);
+  if (!tenantId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
+
+  const body = await req.json().catch(() => ({}));
+  const id = typeof body.id === "string" ? body.id.trim() : "";
+  if (!id) return NextResponse.json({ error: "id is required" }, { status: 400 });
+
+  const patch: Parameters<typeof rescheduleAppointment>[2] = {};
+  if (typeof body.resourceId === "string" && body.resourceId.trim()) {
+    patch.resourceId = body.resourceId.trim();
+  }
+  if (body.startsAt !== undefined) {
+    const startsAt = new Date(String(body.startsAt));
+    if (Number.isNaN(startsAt.getTime()) || !isOnGrid(startsAt)) {
+      return NextResponse.json({ error: "startsAt must be on a 15-minute boundary" }, { status: 400 });
+    }
+    patch.startsAt = startsAt;
+  }
+  if (isStandardDuration(body.durationMinutes)) patch.durationMinutes = body.durationMinutes;
+  if (typeof body.customerName === "string") patch.customerName = body.customerName.trim().slice(0, 120);
+  if (typeof body.service === "string") patch.service = body.service.trim().slice(0, 200);
+
+  const result = await rescheduleAppointment(tenantId, id, patch);
+  if (!result.ok) {
+    return result.reason === "taken"
+      ? NextResponse.json({ error: "That slot is already taken" }, { status: 409 })
+      : NextResponse.json({ error: "Appointment not found" }, { status: 404 });
+  }
   return NextResponse.json({ appointment: result.appointment });
 }
 

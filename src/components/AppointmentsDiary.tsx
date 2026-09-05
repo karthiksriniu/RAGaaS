@@ -40,6 +40,19 @@ function minuteLabel(m: number): string {
   const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
   return mins === 0 ? `${h12} ${suffix}` : `${h12}:${String(mins).padStart(2, "0")}`;
 }
+/** A date and a wall-clock time in IST, back to the instant they name. The
+ * inverse of istMinuteOfDay, and the reason the edit form can hand the server a
+ * plain timestamp. */
+function istToUtcISO(dayISO: string, hhmm: string): string {
+  const [y, m, d] = dayISO.split("-").map(Number);
+  const [hh, mm] = hhmm.split(":").map(Number);
+  return new Date(Date.UTC(y, m - 1, d) - IST_OFFSET_MS + (hh * 60 + mm) * 60_000).toISOString();
+}
+function timeValue(iso: string): string {
+  const m = istMinuteOfDay(iso);
+  return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
+}
+
 function shiftDay(dayISO: string, by: number): string {
   const [y, m, d] = dayISO.split("-").map(Number);
   return new Date(Date.UTC(y, m - 1, d) + by * 86_400_000).toISOString().slice(0, 10);
@@ -77,6 +90,12 @@ export function AppointmentsDiary() {
   const [showList, setShowList] = useState(false);
   const [showConfig, setShowConfig] = useState(false);
   const [nextUp, setNextUp] = useState<Appointment | null>(null);
+  const [editing, setEditing] = useState<string | null>(null);
+  const [editResource, setEditResource] = useState("");
+  const [editDay, setEditDay] = useState("");
+  const [editTime, setEditTime] = useState("");
+  const [editError, setEditError] = useState<string | null>(null);
+  const [savingEdit, setSavingEdit] = useState(false);
   const [filterResource, setFilterResource] = useState("all");
 
   useEffect(() => {
@@ -151,14 +170,50 @@ export function AppointmentsDiary() {
 
   const filtered = filterResource === "all" ? live : live.filter((a) => a.resourceId === filterResource);
 
-  async function cancel(id: string) {
-    const res = await fetch(`/api/business/appointments?id=${encodeURIComponent(id)}`, { method: "DELETE" });
-    if (!res.ok) return;
+  async function refresh() {
     const r = await fetch(`/api/business/appointments?from=${day}&to=${day}`);
     if (!r.ok) return;
     const d = await r.json();
     setAppointments(d.appointments ?? []);
     setUtilisation(d.utilisation ?? []);
+  }
+
+  function startEdit(a: Appointment) {
+    setEditing(a.id);
+    setEditError(null);
+    setEditResource(a.resourceId);
+    setEditDay(istDay(new Date(a.startsAt)));
+    setEditTime(timeValue(a.startsAt));
+  }
+
+  async function saveEdit(a: Appointment) {
+    setSavingEdit(true);
+    setEditError(null);
+    try {
+      const res = await fetch("/api/business/appointments", {
+        method: "PATCH",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          id: a.id,
+          resourceId: editResource,
+          startsAt: istToUtcISO(editDay, editTime),
+        }),
+      });
+      const d = await res.json().catch(() => ({}));
+      if (!res.ok) { setEditError(d.error || "Could not save the change"); return; }
+      setEditing(null);
+      // The booking may have MOVED off this day, so follow it rather than
+      // refreshing a day it is no longer on and appearing to have deleted it.
+      const movedTo = istDay(new Date(d.appointment.startsAt));
+      if (movedTo !== day) setDay(movedTo); else await refresh();
+    } finally {
+      setSavingEdit(false);
+    }
+  }
+
+  async function cancel(id: string) {
+    const res = await fetch(`/api/business/appointments?id=${encodeURIComponent(id)}`, { method: "DELETE" });
+    if (res.ok) await refresh();
   }
 
   const isToday = day === istDay(new Date());
@@ -243,7 +298,7 @@ export function AppointmentsDiary() {
                   value={filterResource}
                   options={[{ value: "all", label: "Everyone" },
                             ...resources.map((r) => ({ value: r.id, label: r.name }))]}
-                  style={{ width: "100%" }}
+                  style={{ width: "100%", minWidth: 0 }}
                   onChange={setFilterResource}
                 />
               </div>
@@ -258,20 +313,73 @@ export function AppointmentsDiary() {
           ) : (
             <div className="flex flex-col">
               {filtered.map((a) => (
-                <div key={a.id} className="flex items-center gap-3 flex-wrap"
+                <div key={a.id}
                      style={{ padding: ".6rem 0", borderBottom: "1px solid var(--color-outline-variant)" }}>
-                  <span className="kw-title-medium" style={{ width: 90 }}>
-                    {minuteLabel(istMinuteOfDay(a.startsAt))}
-                  </span>
-                  <span className="kw-body-medium" style={{ width: 120 }}>{a.resourceName}</span>
-                  <span className="kw-body-medium" style={{ flex: "1 1 200px" }}>
-                    {a.customerName || "No name given"} · {a.customerPhone}
-                    {a.partySize > 1 && ` · ${a.partySize} people`}
-                  </span>
-                  <span className="kw-body-small" style={{ color: "var(--color-on-surface-variant)" }}>
-                    {a.service || ""}
-                  </span>
-                  <Button variant="text" onClick={() => cancel(a.id)}>Cancel</Button>
+                  <div className="flex items-center gap-3 flex-wrap">
+                    <span className="kw-title-medium" style={{ width: 90 }}>
+                      {minuteLabel(istMinuteOfDay(a.startsAt))}
+                    </span>
+                    <span className="kw-body-medium" style={{ width: 120 }}>{a.resourceName}</span>
+                    <span className="kw-body-medium" style={{ flex: "1 1 200px" }}>
+                      {a.customerName || "No name given"} · {a.customerPhone}
+                      {a.partySize > 1 && ` · ${a.partySize} people`}
+                    </span>
+                    <span className="kw-body-small" style={{ color: "var(--color-on-surface-variant)" }}>
+                      {a.service || ""}
+                    </span>
+                    <Button variant="text" onClick={() => editing === a.id ? setEditing(null) : startEdit(a)}>
+                      {editing === a.id ? "Discard" : "Edit"}
+                    </Button>
+                    {/* "Cancel the booking", not "cancel this form" - which is
+                        what it reads as sitting next to a Close button. */}
+                    <Button variant="text" onClick={() => cancel(a.id)}>Cancel booking</Button>
+                  </div>
+
+                  {editing === a.id && (
+                    <div style={{ display: "flex", gap: ".75rem", alignItems: "flex-start",
+                                  flexWrap: "wrap", padding: ".8rem 0 .2rem" }}>
+                      <div style={{ flex: "1 1 170px", minWidth: 0 }}>
+                        <span className="kw-body-small" style={{ display: "block", marginBottom: ".25rem",
+                              color: "var(--color-on-surface-variant)" }}>With</span>
+                        {/* Only real people. "Everyone" is a filter, not somewhere
+                            a booking can be moved to. */}
+                        <Select
+                          value={editResource}
+                          options={resources.map((r) => ({ value: r.id, label: r.name }))}
+                          style={{ width: "100%", minWidth: 0 }}
+                          onChange={setEditResource}
+                        />
+                      </div>
+                      <div>
+                        <span className="kw-body-small" style={{ display: "block", marginBottom: ".25rem",
+                              color: "var(--color-on-surface-variant)" }}>Date</span>
+                        <input type="date" value={editDay} onChange={(e) => setEditDay(e.target.value)}
+                          style={{ padding: ".5rem .6rem", height: 56, borderRadius: "var(--radius-xs)",
+                                   border: "1px solid var(--color-outline)", background: "transparent" }} />
+                      </div>
+                      <div>
+                        <span className="kw-body-small" style={{ display: "block", marginBottom: ".25rem",
+                              color: "var(--color-on-surface-variant)" }}>Time</span>
+                        {/* step 900 keeps entry on the 15-minute grid the slot
+                            table is keyed on; the server refuses anything else. */}
+                        <input type="time" step={900} value={editTime}
+                          onChange={(e) => setEditTime(e.target.value)}
+                          style={{ padding: ".5rem .6rem", height: 56, borderRadius: "var(--radius-xs)",
+                                   border: "1px solid var(--color-outline)", background: "transparent" }} />
+                      </div>
+                      <div style={{ paddingTop: "1.6rem" }}>
+                        <Button variant="filled" disabled={savingEdit || !editDay || !editTime}
+                          onClick={() => saveEdit(a)}>
+                          {savingEdit ? "Saving…" : "Save"}
+                        </Button>
+                      </div>
+                      {editError && (
+                        <p className="kw-body-small" style={{ width: "100%", color: "var(--color-error)" }}>
+                          {editError}
+                        </p>
+                      )}
+                    </div>
+                  )}
                 </div>
               ))}
             </div>
