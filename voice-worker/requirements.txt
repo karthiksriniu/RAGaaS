@@ -1,7 +1,22 @@
 # LiveKit agents + the Sarvam plugin (STT/LLM/TTS) and silero VAD.
-# Pinned to a minor range: the beta workflows namespace used for warm
-# transfer (livekit.agents.beta.workflows) is explicitly beta and has moved
-# between releases, so an unpinned install can break the transfer path.
-livekit-agents[sarvam,silero]~=1.6
+#
+# ~=1.6.0, NOT ~=1.6. The comment here used to say "pinned to a minor range"
+# while the specifier said something else entirely: ~=1.6 means >=1.6,<2.0, so
+# it accepted every 1.x release. The intent and the specifier disagreed, and
+# nothing caught it because the image is only rebuilt when the worker changes.
+#
+# What that cost: the image was rebuilt on 5 Sep and pulled 1.8.0, where the
+# LLM path reaches a Sarvam endpoint that answers
+#   400 "This endpoint is currently in beta and not available"
+# for this account. Every call connected, greeted (say() is TTS-only and needs
+# no LLM), then went silent on the first question - which looked like a
+# telephony or language fault and was neither. sarvam-105b has been the model
+# since the worker was written and had worked throughout.
+#
+# ~=1.6.0 means >=1.6.0,<1.7.0, which is what the original comment intended:
+# the beta workflows namespace used for warm transfer
+# (livekit.agents.beta.workflows) has moved between releases, so a floating
+# install can break the transfer path too.
+livekit-agents[sarvam,silero]~=1.6.0
 python-dotenv~=1.0
 aiohttp~=3.9

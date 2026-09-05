@@ -318,8 +318,19 @@ class MyBizCareAgent(Agent):
         code = detect_language_code(text, self._tts_language)
         if code == self._tts_language:
             return
+
+        # self.tts, NOT self.session.tts. The stt/llm/tts triple is passed to
+        # Agent.__init__ above, not to AgentSession, so the session's own tts is
+        # None and reaching through it raised AttributeError on every turn.
+        # Both are tried because which one holds it is a plugin-version detail,
+        # and being wrong again should degrade to "wrong language" rather than
+        # "exception on every turn".
+        tts = getattr(self, "tts", None) or getattr(self.session, "tts", None)
+        if tts is None or not hasattr(tts, "update_options"):
+            logger.warning("no TTS to switch to %s; leaving voice as %s", code, self._tts_language)
+            return
         try:
-            self.session.tts.update_options(target_language_code=code)
+            tts.update_options(target_language_code=code)
             logger.info("switching voice to %s", code)
             self._tts_language = code
         except Exception:
