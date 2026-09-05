@@ -96,21 +96,34 @@ export function AppointmentsDiary() {
   const [editTime, setEditTime] = useState("");
   const [editError, setEditError] = useState<string | null>(null);
   const [savingEdit, setSavingEdit] = useState(false);
-  const [filterResource, setFilterResource] = useState("all");
+  // Hidden rather than visible, so a person added while this is open is shown
+  // by default - the set only ever names people deliberately switched off.
+  const [hidden, setHidden] = useState<Set<string>>(new Set());
+  const [showFilter, setShowFilter] = useState(false);
+
+  const loadRoster = useCallback(async () => {
+    const res = await fetch("/api/business/scheduling");
+    if (!res.ok) return;
+    const d = await res.json();
+    const active = (d.resources ?? []).filter((r: Resource) => r.active);
+    setResources(active);
+    setBusinessHours(d.businessHours ?? []);
+    setResourceHours(d.hours ?? {});
+    // Anyone newly added starts visible. Adding someone and having them arrive
+    // hidden behind a filter is indistinguishable from the add not working.
+    setHidden((prev) => {
+      const known = new Set(active.map((r: Resource) => r.id));
+      return new Set([...prev].filter((id) => known.has(id)));
+    });
+  }, []);
 
   useEffect(() => {
+    // Inside the closure, not the effect body: loadRoster sets state, and a
+    // synchronous call to it cascades a render before the fetch has started.
     let cancelled = false;
-    (async () => {
-      const res = await fetch("/api/business/scheduling");
-      if (!res.ok || cancelled) return;
-      const d = await res.json();
-      if (cancelled) return;
-      setResources((d.resources ?? []).filter((r: Resource) => r.active));
-      setBusinessHours(d.businessHours ?? []);
-      setResourceHours(d.hours ?? {});
-    })();
+    (async () => { if (!cancelled) await loadRoster(); })();
     return () => { cancelled = true; };
-  }, []);
+  }, [loadRoster]);
 
   useEffect(() => {
     let cancelled = false;
@@ -139,8 +152,8 @@ export function AppointmentsDiary() {
   }, [day, businessHours, resourceHours]);
 
   const openResources = useMemo(
-    () => resources.filter((r) => hoursFor(r.id) !== null),
-    [resources, hoursFor]
+    () => resources.filter((r) => hoursFor(r.id) !== null && !hidden.has(r.id)),
+    [resources, hoursFor, hidden]
   );
 
   // The visible window: from the earliest opening to the latest closing today,
@@ -168,7 +181,10 @@ export function AppointmentsDiary() {
     };
   }, [live, utilisation]);
 
-  const filtered = filterResource === "all" ? live : live.filter((a) => a.resourceId === filterResource);
+  // One filter for the whole page. Two - a checkbox set for the columns and a
+  // dropdown for the list - would eventually disagree, and the reader would
+  // have no way to tell which one was lying.
+  const filtered = live.filter((a) => !hidden.has(a.resourceId));
 
   async function refresh() {
     const r = await fetch(`/api/business/appointments?from=${day}&to=${day}`);
@@ -253,7 +269,7 @@ export function AppointmentsDiary() {
         </button>
         {showConfig && (
           <div style={{ padding: "0 1.1rem 1.1rem", borderTop: "1px solid var(--color-outline-variant)" }}>
-            <div className="mt-4"><AppointmentsConfigTab /></div>
+            <div className="mt-4"><AppointmentsConfigTab onChanged={loadRoster} /></div>
           </div>
         )}
       </Card>
@@ -267,6 +283,62 @@ export function AppointmentsDiary() {
           style={{ padding: ".45rem .6rem", borderRadius: "var(--radius-sm)",
                    border: "1px solid var(--color-outline-variant)", background: "var(--color-surface)" }}
         />
+
+        <div style={{ position: "relative" }}>
+          <Button variant="outlined" onClick={() => setShowFilter((v) => !v)}>
+            {hidden.size === 0
+              ? `People: all (${resources.length})`
+              : `People: ${resources.length - hidden.size} of ${resources.length}`}
+          </Button>
+
+          {showFilter && (
+            <>
+              {/* A backdrop, so clicking anywhere else closes it - a panel that
+                  only shuts via its own button gets left open and then covers
+                  the thing it was opened to filter. */}
+              <div onClick={() => setShowFilter(false)}
+                   style={{ position: "fixed", inset: 0, zIndex: 10 }} />
+              <div style={{ position: "absolute", top: "calc(100% + 6px)", left: 0, zIndex: 11,
+                            minWidth: 220, background: "var(--color-surface-container)",
+                            borderRadius: "var(--radius-xs)", boxShadow: "var(--elevation-2)",
+                            padding: ".6rem 0" }}>
+                <div className="flex items-center justify-between" style={{ padding: "0 .9rem .5rem" }}>
+                  <span className="kw-body-small" style={{ color: "var(--color-on-surface-variant)" }}>
+                    Show in the diary
+                  </span>
+                  <button type="button" onClick={() => setHidden(new Set())}
+                    style={{ background: "none", border: "none", cursor: "pointer",
+                             color: "var(--color-primary)", font: "inherit", fontSize: 13 }}>
+                    All
+                  </button>
+                </div>
+                {resources.length === 0 && (
+                  <p className="kw-body-small" style={{ padding: "0 .9rem .3rem",
+                        color: "var(--color-on-surface-variant)" }}>
+                    Nobody added yet.
+                  </p>
+                )}
+                {resources.map((r) => (
+                  <label key={r.id} className="flex items-center gap-2"
+                         style={{ padding: ".4rem .9rem", cursor: "pointer" }}>
+                    <input
+                      type="checkbox"
+                      checked={!hidden.has(r.id)}
+                      onChange={(e) => setHidden((prev) => {
+                        const next = new Set(prev);
+                        if (e.target.checked) next.delete(r.id); else next.add(r.id);
+                        return next;
+                      })}
+                      style={{ width: "1rem", height: "1rem", accentColor: "var(--color-primary)",
+                               cursor: "pointer" }}
+                    />
+                    <span className="kw-body-medium">{r.name}</span>
+                  </label>
+                ))}
+              </div>
+            </>
+          )}
+        </div>
       </div>
 
       {/* KPIs. Clickable, because a number you cannot get behind is decoration. */}
@@ -292,23 +364,12 @@ export function AppointmentsDiary() {
         <Card variant="outlined" padding={20} style={{ marginTop: "1rem" }}>
           <div className="flex items-center justify-between gap-3 flex-wrap mb-3">
             <p className="kw-title-medium">Appointments on {longDate(day)}</p>
-            <div className="flex items-center gap-2">
-              <div style={{ width: 190 }}>
-                <Select
-                  value={filterResource}
-                  options={[{ value: "all", label: "Everyone" },
-                            ...resources.map((r) => ({ value: r.id, label: r.name }))]}
-                  style={{ width: "100%", minWidth: 0 }}
-                  onChange={setFilterResource}
-                />
-              </div>
-              <Button variant="text" onClick={() => setShowList(false)}>Close</Button>
-            </div>
+            <Button variant="text" onClick={() => setShowList(false)}>Close</Button>
           </div>
 
           {filtered.length === 0 ? (
             <p className="kw-body-medium" style={{ color: "var(--color-on-surface-variant)" }}>
-              Nothing booked{filterResource === "all" ? "" : " for this person"} on this day.
+              Nothing booked{hidden.size > 0 ? " for the people shown" : ""} on this day.
             </p>
           ) : (
             <div className="flex flex-col">
@@ -414,7 +475,7 @@ export function AppointmentsDiary() {
           </p>
         ) : (
           <div style={{ overflowX: "auto" }}>
-            <div style={{ display: "flex", minWidth: 120 + openResources.length * 150 }}>
+            <div style={{ display: "flex", minWidth: 70 + openResources.length * 170 }}>
               {/* Time gutter */}
               <div style={{ width: 70, flex: "none", borderRight: "1px solid var(--color-outline-variant)" }}>
                 <div style={{ height: 40, borderBottom: "1px solid var(--color-outline-variant)" }} />
@@ -437,7 +498,7 @@ export function AppointmentsDiary() {
                 const mine = live.filter((a) => a.resourceId === r.id);
                 const hue = hueFor(r.id);
                 return (
-                  <div key={r.id} style={{ flex: "1 1 150px", minWidth: 150,
+                  <div key={r.id} style={{ flex: "1 1 170px", minWidth: 170,
                                            borderRight: "1px solid var(--color-outline-variant)" }}>
                     <div style={{ height: 40, display: "flex", alignItems: "center", justifyContent: "center",
                                   borderBottom: "1px solid var(--color-outline-variant)",
@@ -461,7 +522,7 @@ export function AppointmentsDiary() {
                       {mine.map((a) => {
                         const start = istMinuteOfDay(a.startsAt);
                         return (
-                          <button key={a.id} type="button" onClick={() => { setFilterResource(r.id); setShowList(true); }}
+                          <button key={a.id} type="button" onClick={() => setShowList(true)}
                             title={`${a.customerName || "No name"} · ${a.customerPhone}`}
                             style={{
                               position: "absolute", left: 4, right: 4,

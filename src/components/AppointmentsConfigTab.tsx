@@ -123,7 +123,7 @@ const DEFAULT_WEEK: Hours[] = [1, 2, 3, 4, 5, 6].map((weekday) => ({
   weekday, opensMinute: 600, closesMinute: 1200,
 }));
 
-export function AppointmentsConfigTab() {
+export function AppointmentsConfigTab({ onChanged }: { onChanged?: () => void } = {}) {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -181,6 +181,7 @@ export function AppointmentsConfigTab() {
       const d = await res.json().catch(() => ({}));
       if (!res.ok) throw new Error(d.error || "Could not save");
       setNotice("Saved. Applies to the next call.");
+      onChanged?.();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally { setSaving(false); }
@@ -200,6 +201,10 @@ export function AppointmentsConfigTab() {
       if (!res.ok) throw new Error(d.error || "Could not add");
       setResources((r) => [...r, d.resource]);
       setNewName(""); setNewCapacity("1");
+      // The diary holds its own copy of the roster and fetched it once on
+      // mount. Without this a person added here does not appear as a column
+      // until the page is reloaded, which reads as the add having failed.
+      onChanged?.();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally { setSaving(false); }
@@ -217,6 +222,7 @@ export function AppointmentsConfigTab() {
       if (!res.ok) throw new Error(d.error || "Could not save");
       setResources((rs) => rs.map((r) => (r.id === id ? d.resource : r)));
       if (d.hours) setResourceHours((h) => ({ ...h, [id]: d.hours }));
+      onChanged?.();
     } catch (e) {
       setError(e instanceof Error ? e.message : String(e));
     } finally { setSaving(false); }
