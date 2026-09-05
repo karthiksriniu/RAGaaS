@@ -11,7 +11,27 @@ import {
   type PaymentOrder,
 } from "@/lib/billing";
 import { isPlan, paymentProvider, type Plan } from "@/lib/upi";
-import { createSubscription, onePeriodAfter, subscriptionAuthPay } from "@/lib/cashfree";
+import {
+  CashfreeApiError,
+  cashfreeEnv,
+  createSubscription,
+  onePeriodAfter,
+  subscriptionAuthPay,
+} from "@/lib/cashfree";
+
+/** Cashfree's own words, but only away from production.
+ *
+ * A gateway error names the exact field it disliked, which is the difference
+ * between a five-second fix and an afternoon - and on staging there is nobody
+ * to protect it from. In production it stays out of the response: it can carry
+ * request detail, and a payer can do nothing with it anyway. */
+function gatewayDetail(err: unknown): Record<string, unknown> {
+  if (cashfreeEnv() === "production") return {};
+  if (err instanceof CashfreeApiError) {
+    return { detail: { status: err.status, code: err.code, message: err.message } };
+  }
+  return { detail: { message: err instanceof Error ? err.message : String(err) } };
+}
 
 /** Good enough to catch a typo, deliberately not a full RFC 5322 parse.
  * Cashfree does its own validation and will reject anything it dislikes; the
@@ -164,8 +184,17 @@ export async function POST(req: NextRequest) {
         console.error("[payment] Cashfree AUTH returned no URL", {
           channel: auth.channel,
           action: auth.action,
+          data: auth.data,
         });
-        return NextResponse.json({ error: "Could not start the payment. Please try again." }, { status: 502 });
+        return NextResponse.json(
+          {
+            error: "Could not start the payment. Please try again.",
+            ...(cashfreeEnv() === "production"
+              ? {}
+              : { detail: { stage: "auth", channel: auth.channel, action: auth.action, data: auth.data } }),
+          },
+          { status: 502 }
+        );
       }
 
       return NextResponse.json({
@@ -179,7 +208,7 @@ export async function POST(req: NextRequest) {
       // Loud: a payer who cannot pay is the one failure that costs a customer.
       console.error("[payment] Cashfree subscription failed for order", order.id, err);
       return NextResponse.json(
-        { error: "Could not start the payment. Please try again." },
+        { error: "Could not start the payment. Please try again.", ...gatewayDetail(err) },
         { status: 502 }
       );
     }

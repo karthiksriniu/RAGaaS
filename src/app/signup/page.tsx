@@ -140,7 +140,13 @@ export default function SignupPage() {
       body: JSON.stringify(body),
     });
     const data = await res.json().catch(() => ({}));
-    if (!res.ok) throw new Error(data.error || "Something went wrong");
+    if (!res.ok) {
+      // `detail` is only ever sent away from production, and it carries the
+      // gateway's own reason. Shown rather than swallowed, because the person
+      // testing staging is the person who can act on it.
+      const detail = data.detail ? ` (${JSON.stringify(data.detail)})` : "";
+      throw new Error((data.error || "Something went wrong") + detail);
+    }
     return data;
   }
 
