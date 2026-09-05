@@ -3,7 +3,7 @@ import { checkWorkerToken } from "@/lib/workerAuth";
 import { checkRateLimit } from "@/lib/rateLimit";
 import { assertTenantLicensed, TenantExpiredError, TenantNotFoundError } from "@/lib/tenants";
 import { bookAppointment, getSchedulingConfig } from "@/lib/appointments";
-import { formatIstTime, isOnGrid, isStandardDuration } from "@/lib/scheduling";
+import { daysAhead, formatIstTime, isOnGrid, isStandardDuration, utcToIst } from "@/lib/scheduling";
 import { normalizeMobile } from "@/lib/mobile";
 
 export const runtime = "nodejs";
@@ -42,6 +42,22 @@ export async function POST(req: NextRequest) {
   // one appointment out loud and write another.
   if (!isOnGrid(startsAt)) {
     return NextResponse.json({ error: "startsAt must be on a 15-minute boundary" }, { status: 400 });
+  }
+
+  // Re-checked here, not just in availability. The tool could pass anything,
+  // and a rule enforced only where it is offered is not enforced.
+  const now = new Date();
+  if (startsAt.getTime() < now.getTime() + config.leadMinutes * 60_000) {
+    return NextResponse.json(
+      { ok: false, reason: "too_soon", leadMinutes: config.leadMinutes },
+      { status: 409 }
+    );
+  }
+  if (daysAhead(utcToIst(startsAt).day, now) > config.windowDays) {
+    return NextResponse.json(
+      { ok: false, reason: "out_of_window", windowDays: config.windowDays },
+      { status: 409 }
+    );
   }
 
   const durationMinutes = isStandardDuration(body.durationMinutes)

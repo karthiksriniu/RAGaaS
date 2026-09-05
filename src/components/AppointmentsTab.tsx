@@ -130,6 +130,8 @@ export function AppointmentsTab() {
 
   const [enabled, setEnabled] = useState(false);
   const [defaultMinutes, setDefaultMinutes] = useState(30);
+  const [windowDays, setWindowDays] = useState(30);
+  const [leadMinutes, setLeadMinutes] = useState(60);
   const [businessHours, setBusinessHours] = useState<Hours[]>([]);
   const [resources, setResources] = useState<Resource[]>([]);
   const [resourceHours, setResourceHours] = useState<Record<string, Hours[]>>({});
@@ -148,6 +150,8 @@ export function AppointmentsTab() {
     const d = await res.json();
     setEnabled(Boolean(d.enabled));
     setDefaultMinutes(d.defaultMinutes ?? 30);
+    setWindowDays(d.windowDays ?? 30);
+    setLeadMinutes(d.leadMinutes ?? 60);
     setBusinessHours(d.businessHours?.length ? d.businessHours : DEFAULT_WEEK);
     setResources(d.resources ?? []);
     setResourceHours(d.hours ?? {});
@@ -265,18 +269,51 @@ export function AppointmentsTab() {
           </span>
         </label>
 
-        <div className="mt-4" style={{ maxWidth: 260 }}>
-          <Select
-            label="Appointment length"
-            value={String(defaultMinutes)}
-            options={[
-              { value: "15", label: "15 minutes" },
-              { value: "30", label: "30 minutes" },
-              { value: "60", label: "1 hour" },
-            ]}
-            onChange={(v) => { setDefaultMinutes(Number(v)); saveConfig({ defaultMinutes: Number(v) }); }}
-          />
+        <div className="mt-4 flex gap-3 flex-wrap">
+          <div style={{ flex: "1 1 200px" }}>
+            <Select
+              label="Appointment length"
+              value={String(defaultMinutes)}
+              options={[
+                { value: "15", label: "15 minutes" },
+                { value: "30", label: "30 minutes" },
+                { value: "60", label: "1 hour" },
+              ]}
+              onChange={(v) => { setDefaultMinutes(Number(v)); saveConfig({ defaultMinutes: Number(v) }); }}
+            />
+          </div>
+          <div style={{ flex: "1 1 200px" }}>
+            <Select
+              label="Book up to"
+              value={String(windowDays)}
+              options={[
+                { value: "7", label: "1 week ahead" },
+                { value: "14", label: "2 weeks ahead" },
+                { value: "30", label: "30 days ahead" },
+                { value: "60", label: "60 days ahead" },
+                { value: "90", label: "90 days ahead" },
+              ]}
+              onChange={(v) => { setWindowDays(Number(v)); saveConfig({ windowDays: Number(v) }); }}
+            />
+          </div>
+          <div style={{ flex: "1 1 200px" }}>
+            <Select
+              label="Earliest booking"
+              value={String(leadMinutes)}
+              options={[
+                { value: "15", label: "15 minutes from now" },
+                { value: "30", label: "30 minutes from now" },
+                { value: "60", label: "1 hour from now" },
+                { value: "120", label: "2 hours from now" },
+                { value: "240", label: "4 hours from now" },
+              ]}
+              onChange={(v) => { setLeadMinutes(Number(v)); saveConfig({ leadMinutes: Number(v) }); }}
+            />
+          </div>
         </div>
+        <p className="kw-body-small mt-2" style={{ color: "var(--color-on-surface-variant)" }}>
+          Your agent will not offer anything sooner than this, or further ahead than the window.
+        </p>
       </Card>
 
       <Card variant="filled" padding={20} style={{ marginBottom: "1rem" }}>

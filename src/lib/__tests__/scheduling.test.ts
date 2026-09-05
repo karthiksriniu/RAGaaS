@@ -12,6 +12,10 @@ import {
   utilisation,
   effectiveHours,
   openSlotCount,
+  daysAhead,
+  needsDateConfirmation,
+  nearestStarts,
+  parseSpokenTime,
   istDaysBetween,
 } from "../scheduling";
 
@@ -276,5 +280,74 @@ describe("effectiveHours", () => {
 
   it("is closed when neither the business nor the resource says otherwise", () => {
     expect(effectiveHours(false, undefined, undefined)).toBeUndefined();
+  });
+});
+
+describe("booking window", () => {
+  const from = new Date("2026-09-05T06:00:00Z"); // 11:30 IST on the 5th
+
+  it("counts whole IST days ahead", () => {
+    expect(daysAhead("2026-09-05", from)).toBe(0);
+    expect(daysAhead("2026-09-06", from)).toBe(1);
+    expect(daysAhead("2026-10-05", from)).toBe(30);
+    expect(daysAhead("2026-09-04", from)).toBe(-1);
+  });
+
+  // "Thursday" a fortnight out is ambiguous, and a caller who hears only a time
+  // will assume the nearer one.
+  it("asks for the date to be confirmed beyond a week", () => {
+    expect(needsDateConfirmation("2026-09-11", from)).toBe(false); // 6 days
+    expect(needsDateConfirmation("2026-09-12", from)).toBe(false); // exactly 7
+    expect(needsDateConfirmation("2026-09-13", from)).toBe(true);  // 8
+  });
+});
+
+describe("nearestStarts", () => {
+  const day = "2026-09-05";
+  const at = (m: number) => istToUtc(day, m);
+  const mins = (ds: Date[]) => ds.map((d) => utcToIst(d).minuteOfDay);
+
+  // The case this exists for: asking for 6pm at a salon open from 10 and being
+  // told about 10:00, 10:15, 10:30 is technically correct and useless.
+  it("offers times near what was asked for, not the earliest of the day", () => {
+    const all = [600, 615, 630, 1050, 1080, 1110, 1140].map(at);
+    expect(mins(nearestStarts(all, 1080, 3))).toEqual([1050, 1080, 1110]);
+  });
+
+  it("returns them in chronological order, however they scored", () => {
+    const all = [1140, 1080, 1050].map(at);
+    expect(mins(nearestStarts(all, 1080, 3))).toEqual([1050, 1080, 1140]);
+  });
+
+  // Asked for 6, offered 5:45 or 6:15 - people expect to be pushed back.
+  it("breaks a tie towards the later slot", () => {
+    const all = [1065, 1095].map(at); // 5:45 and 6:15 around 6:00
+    expect(mins(nearestStarts(all, 1080, 1))).toEqual([1095]);
+  });
+
+  it("handles fewer options than asked for", () => {
+    expect(mins(nearestStarts([at(600)], 1080, 3))).toEqual([600]);
+    expect(nearestStarts([], 1080, 3)).toEqual([]);
+    expect(nearestStarts([at(600)], 1080, 0)).toEqual([]);
+  });
+});
+
+describe("parseSpokenTime", () => {
+  it("reads the ways people say a time", () => {
+    expect(parseSpokenTime("5:30 pm")).toBe(1050);
+    expect(parseSpokenTime("5 pm")).toBe(1020);
+    expect(parseSpokenTime("17:30")).toBe(1050);
+    expect(parseSpokenTime("9 am")).toBe(540);
+    expect(parseSpokenTime("12 am")).toBe(0);
+    expect(parseSpokenTime("12 pm")).toBe(720);
+    expect(parseSpokenTime(" 6:45PM ")).toBe(1125);
+  });
+
+  // Null means "no preference", which is a real answer - the caller said "any
+  // time" or the model passed prose. It must not become midnight.
+  it("returns null rather than guessing", () => {
+    for (const bad of ["any time", "", null, undefined, "tomorrow", "25:00", "5:75 pm", "13 pm"]) {
+      expect(parseSpokenTime(bad), String(bad)).toBeNull();
+    }
   });
 });

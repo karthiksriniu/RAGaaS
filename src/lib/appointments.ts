@@ -435,28 +435,38 @@ export async function utilisationFor(tenantId: string, opts: {
 
 /** Per-tenant scheduling settings, read straight from tenants. */
 export async function getSchedulingConfig(tenantId: string): Promise<{
-  enabled: boolean; defaultMinutes: number;
+  enabled: boolean; defaultMinutes: number; windowDays: number; leadMinutes: number;
 }> {
-  const res = await pool.query<{ appointments_enabled: boolean; appointment_default_minutes: number }>(
-    "SELECT appointments_enabled, appointment_default_minutes FROM tenants WHERE id = $1",
+  const res = await pool.query<{
+    appointments_enabled: boolean; appointment_default_minutes: number;
+    booking_window_days: number; booking_lead_minutes: number;
+  }>(
+    `SELECT appointments_enabled, appointment_default_minutes,
+            booking_window_days, booking_lead_minutes
+       FROM tenants WHERE id = $1`,
     [tenantId]
   );
   const row = res.rows[0];
   return {
     enabled: Boolean(row?.appointments_enabled),
     defaultMinutes: row?.appointment_default_minutes ?? 30,
+    windowDays: row?.booking_window_days ?? 30,
+    leadMinutes: row?.booking_lead_minutes ?? 60,
   };
 }
 
 export async function setSchedulingConfig(tenantId: string, patch: {
-  enabled?: boolean; defaultMinutes?: number;
+  enabled?: boolean; defaultMinutes?: number; windowDays?: number; leadMinutes?: number;
 }): Promise<void> {
   await pool.query(
     `UPDATE tenants SET
        appointments_enabled = coalesce($2, appointments_enabled),
-       appointment_default_minutes = coalesce($3, appointment_default_minutes)
+       appointment_default_minutes = coalesce($3, appointment_default_minutes),
+       booking_window_days = coalesce($4, booking_window_days),
+       booking_lead_minutes = coalesce($5, booking_lead_minutes)
      WHERE id = $1`,
-    [tenantId, patch.enabled ?? null, patch.defaultMinutes ?? null]
+    [tenantId, patch.enabled ?? null, patch.defaultMinutes ?? null,
+     patch.windowDays ?? null, patch.leadMinutes ?? null]
   );
 }
 

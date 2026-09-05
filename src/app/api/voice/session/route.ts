@@ -102,6 +102,8 @@ export async function POST(req: NextRequest) {
     appointments: {
       enabled: scheduling.enabled && resources.length > 0,
       defaultMinutes: scheduling.defaultMinutes,
+      windowDays: scheduling.windowDays,
+      leadMinutes: scheduling.leadMinutes,
       resources: resources.map((r) => ({
         id: r.id, name: r.name, kind: r.kind, capacity: r.capacity,
       })),

@@ -87,6 +87,65 @@ export function slotStartsFor(startsAt: Date, durationMinutes: number): Date[] {
   return out;
 }
 
+/** How far ahead the day being asked about is, in whole IST days. */
+export function daysAhead(dayISO: string, from: Date = new Date()): number {
+  const today = utcToIst(from).day;
+  const [ty, tm, td] = today.split("-").map(Number);
+  const [dy, dm, dd] = dayISO.split("-").map(Number);
+  return Math.round((Date.UTC(dy, dm - 1, dd) - Date.UTC(ty, tm - 1, td)) / (1440 * 60_000));
+}
+
+/** Beyond a week out, a spoken time is not enough - "Thursday" could be either
+ * of two Thursdays, and a caller who hears only a time will assume the nearer
+ * one. The agent is told to say the date back. */
+export const CONFIRM_DATE_AFTER_DAYS = 7;
+
+export function needsDateConfirmation(dayISO: string, from: Date = new Date()): boolean {
+  return daysAhead(dayISO, from) > CONFIRM_DATE_AFTER_DAYS;
+}
+
+/** The N offered times closest to what the caller actually asked for.
+ *
+ * Without this, a caller asking for 6pm at a salon open from 10 is told about
+ * 10:00, 10:15 and 10:30 - technically available, and useless. Proximity is
+ * measured on the clock, then the survivors are put back in chronological
+ * order, because a list read out of order sounds like a mistake.
+ *
+ * Ties go to the LATER slot: asked for 6, offered 5:45 and 6:15, people expect
+ * to be pushed back rather than pulled earlier. */
+export function nearestStarts(starts: Date[], preferredMinuteOfDay: number, limit: number): Date[] {
+  if (starts.length === 0 || limit <= 0) return [];
+  const scored = starts.map((s) => {
+    const m = utcToIst(s).minuteOfDay;
+    return { start: s, distance: Math.abs(m - preferredMinuteOfDay), later: m >= preferredMinuteOfDay };
+  });
+  scored.sort((a, b) =>
+    a.distance - b.distance ||
+    (a.later === b.later ? 0 : a.later ? -1 : 1) ||
+    a.start.getTime() - b.start.getTime()
+  );
+  return scored.slice(0, limit).map((x) => x.start).sort((a, b) => a.getTime() - b.getTime());
+}
+
+/** Parse "5:30 pm", "17:30", "5 pm" to minutes from midnight. Null when it is
+ * not a time - the caller said "any time", or the model passed prose. */
+export function parseSpokenTime(raw: string | null | undefined): number | null {
+  if (!raw) return null;
+  const text = raw.trim().toLowerCase();
+  const m = /^(\d{1,2})(?::(\d{2}))?\s*(am|pm)?$/.exec(text);
+  if (!m) return null;
+  let hour = Number(m[1]);
+  const mins = m[2] ? Number(m[2]) : 0;
+  const suffix = m[3];
+  if (mins > 59) return null;
+  if (suffix) {
+    if (hour < 1 || hour > 12) return null;
+    if (suffix === "pm" && hour !== 12) hour += 12;
+    if (suffix === "am" && hour === 12) hour = 0;
+  } else if (hour > 23) return null;
+  return hour * 60 + mins;
+}
+
 export interface AvailabilityInput {
   /** IST calendar day, YYYY-MM-DD. */
   dayISO: string;

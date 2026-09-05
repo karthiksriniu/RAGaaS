@@ -38,7 +38,7 @@ export async function PATCH(req: NextRequest) {
   if (!tenantId) return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
 
   const body = await req.json().catch(() => ({}));
-  const patch: { enabled?: boolean; defaultMinutes?: number } = {};
+  const patch: { enabled?: boolean; defaultMinutes?: number; windowDays?: number; leadMinutes?: number } = {};
   if (typeof body.enabled === "boolean") patch.enabled = body.enabled;
   if (body.defaultMinutes !== undefined) {
     if (!isStandardDuration(body.defaultMinutes)) {
@@ -48,6 +48,20 @@ export async function PATCH(req: NextRequest) {
       );
     }
     patch.defaultMinutes = body.defaultMinutes;
+  }
+  // Bounded rather than free: a window of 3650 days is not a preference, it is
+  // a typo, and the agent would cheerfully offer a slot in 2036.
+  if (body.windowDays !== undefined) {
+    if (!Number.isInteger(body.windowDays) || body.windowDays < 1 || body.windowDays > 365) {
+      return NextResponse.json({ error: "windowDays must be between 1 and 365" }, { status: 400 });
+    }
+    patch.windowDays = body.windowDays;
+  }
+  if (body.leadMinutes !== undefined) {
+    if (!Number.isInteger(body.leadMinutes) || body.leadMinutes < 0 || body.leadMinutes > 1440) {
+      return NextResponse.json({ error: "leadMinutes must be between 0 and 1440" }, { status: 400 });
+    }
+    patch.leadMinutes = body.leadMinutes;
   }
 
   // Business hours ride along with the config because they are edited on the

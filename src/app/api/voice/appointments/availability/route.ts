@@ -3,7 +3,10 @@ import { checkWorkerToken } from "@/lib/workerAuth";
 import { checkRateLimit } from "@/lib/rateLimit";
 import { assertTenantLicensed, TenantExpiredError, TenantNotFoundError } from "@/lib/tenants";
 import { availabilityForDay, getSchedulingConfig } from "@/lib/appointments";
-import { formatIstTime, isStandardDuration, utcToIst } from "@/lib/scheduling";
+import {
+  daysAhead, formatIstTime, isStandardDuration, nearestStarts,
+  needsDateConfirmation, parseSpokenTime, utcToIst,
+} from "@/lib/scheduling";
 
 export const runtime = "nodejs";
 
@@ -45,16 +48,42 @@ export async function POST(req: NextRequest) {
     ? body.durationMinutes
     : config.defaultMinutes;
 
+  const now = new Date();
+  const ahead = daysAhead(dayISO, now);
+  if (ahead < 0) {
+    return NextResponse.json({ enabled: true, dayISO, past: true, options: [], spoken: "" });
+  }
+  if (ahead > config.windowDays) {
+    return NextResponse.json({
+      enabled: true, dayISO, outOfWindow: true, windowDays: config.windowDays,
+      options: [], spoken: "",
+    });
+  }
+
+  // Nothing sooner than the lead time. Offering a slot fifteen minutes out is
+  // offering one nobody can physically reach.
+  const earliest = new Date(now.getTime() + config.leadMinutes * 60_000);
+
   const perResource = await availabilityForDay(tenantId, {
     dayISO,
     resourceId: typeof body.resourceId === "string" ? body.resourceId : undefined,
     durationMinutes,
-    // Three each: a caller cannot hold more than that in their head, and the
-    // agent reading a dozen times is worse than useless.
-    limitPerResource: 3,
+    now: earliest,
+    // Deliberately unlimited here: narrowing happens below, either around the
+    // time the caller asked for or from the front. Capping first would throw
+    // away the 6pm slot they wanted in favour of three at opening time.
   });
 
-  const options = perResource.flatMap(({ resource, starts }) =>
+  // What they actually asked for, if they asked for anything. Null means "any
+  // time", which is a real answer and must not become midnight.
+  const preferred = parseSpokenTime(typeof body.preferredTime === "string" ? body.preferredTime : null);
+
+  const narrowed = perResource.map(({ resource, starts }) => ({
+    resource,
+    starts: preferred === null ? starts.slice(0, 3) : nearestStarts(starts, preferred, 3),
+  }));
+
+  const options = narrowed.flatMap(({ resource, starts }) =>
     starts.map((s) => ({
       resourceId: resource.id,
       resourceName: resource.name,
@@ -67,7 +96,7 @@ export async function POST(req: NextRequest) {
   // Pre-composed so the model has something to say rather than a list to
   // narrate - the same reasoning as search_knowledge_base returning framed text.
   const spoken = options.length
-    ? perResource
+    ? narrowed
         .filter((r) => r.starts.length)
         .map((r) => `${r.resource.name}: ${r.starts.map(formatIstTime).join(", ")}`)
         .join("; ")
@@ -76,5 +105,14 @@ export async function POST(req: NextRequest) {
   return NextResponse.json({
     enabled: true, dayISO, durationMinutes, options, spoken,
     none: options.length === 0,
+    // Beyond a week, a time alone is ambiguous - the agent is told to say the
+    // date back before booking.
+    confirmDate: needsDateConfirmation(dayISO, now),
+    // True when the caller named a time and these are the nearest instead, so
+    // the agent says "the closest I have is..." rather than implying it is what
+    // they asked for.
+    nearestTo: preferred !== null && options.length > 0
+      ? (typeof body.preferredTime === "string" ? body.preferredTime : null)
+      : null,
   });
 }

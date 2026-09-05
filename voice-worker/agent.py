@@ -135,6 +135,8 @@ class TenantContext:
         a = appointments or {}
         self.appointments_enabled: bool = bool(a.get("enabled"))
         self.appointment_minutes: int = int(a.get("defaultMinutes") or 30)
+        self.booking_window_days: int = int(a.get("windowDays") or 30)
+        self.booking_lead_minutes: int = int(a.get("leadMinutes") or 60)
         self.resources: list[dict] = list(a.get("resources") or [])
 
 
@@ -538,13 +540,19 @@ class SchedulingAgent(MyBizCareAgent):
 
     @function_tool
     async def check_availability(
-        self, ctx: RunContext, day: str | None = None, resource_name: str | None = None
+        self,
+        ctx: RunContext,
+        day: str | None = None,
+        resource_name: str | None = None,
+        preferred_time: str | None = None,
     ) -> str:
         """Find free appointment times for this business.
 
         Args:
             day: The date the caller asked for, as YYYY-MM-DD. Omit for today.
             resource_name: The person, table or doctor they asked for, if they named one.
+            preferred_time: The time they asked for, e.g. "5:30 pm". Omit if they
+                said any time is fine - do NOT invent one.
         """
         resource = self._resource_by_name(resource_name)
         payload: dict = {
@@ -555,6 +563,8 @@ class SchedulingAgent(MyBizCareAgent):
             payload["dayISO"] = day
         if resource:
             payload["resourceId"] = resource["id"]
+        if preferred_time:
+            payload["preferredTime"] = preferred_time
 
         try:
             async with self._http.post(
@@ -573,16 +583,38 @@ class SchedulingAgent(MyBizCareAgent):
             return ("Could not check the diary just now. Tell the caller you cannot see the "
                     "schedule and offer to transfer them to a person.")
 
+        if data.get("outOfWindow"):
+            return (f"That is further ahead than this business takes bookings "
+                    f"({data.get('windowDays')} days). Tell the caller that and offer a nearer date.")
+        if data.get("past"):
+            return "That date has passed. Ask the caller which upcoming day they meant."
+
         self._offered = data.get("options") or []
         if not self._offered:
-            return ("Nothing is free then. Tell the caller that time is fully booked and ask "
+            return ("Nothing is free then. Tell the caller that day is fully booked and ask "
                     "whether another day would work.")
 
-        return (
-            "These times are free. Offer them to the caller in your own words, then call "
-            "book_appointment with the one they choose. Do not invent other times.\n\n"
-            + (data.get("spoken") or "")
+        lines = []
+        if data.get("nearestTo"):
+            # Said plainly, because presenting the nearest slot as though it were
+            # the requested one is how a caller turns up at the wrong hour.
+            lines.append(
+                f"The caller asked for {data['nearestTo']} and that exact time is not free. "
+                "These are the CLOSEST times available - say so before offering them."
+            )
+        else:
+            lines.append("These times are free. Offer them to the caller in your own words.")
+
+        if data.get("confirmDate"):
+            lines.append(
+                "This is more than a week away, so say the full date back to the caller and get "
+                "them to confirm it before you book."
+            )
+
+        lines.append(
+            "Then call book_appointment with the one they choose. Do not invent other times."
         )
+        return "\n".join(lines) + "\n\n" + (data.get("spoken") or "")
 
     @function_tool
     async def book_appointment(
@@ -643,6 +675,15 @@ class SchedulingAgent(MyBizCareAgent):
                 # 409 is the slot going while we were talking - a normal outcome
                 # of a busy diary, not a fault. Say so plainly and re-offer.
                 if res.status == 409:
+                    detail = await res.json()
+                    reason = detail.get("reason")
+                    if reason == "too_soon":
+                        return (f"That is too soon - this business needs at least "
+                                f"{detail.get('leadMinutes')} minutes' notice. Tell the caller and "
+                                "offer a later time.")
+                    if reason == "out_of_window":
+                        return (f"That is beyond how far ahead this business books "
+                                f"({detail.get('windowDays')} days). Offer a nearer date.")
                     self._offered = []
                     return ("That time was just taken by someone else. Apologise, call "
                             "check_availability again, and offer what is left.")
