@@ -4,7 +4,7 @@ import { checkRateLimit } from "@/lib/rateLimit";
 import { assertTenantLicensed, TenantExpiredError, TenantNotFoundError } from "@/lib/tenants";
 import { availabilityForDay, getSchedulingConfig } from "@/lib/appointments";
 import {
-  daysAhead, formatIstTime, isStandardDuration, nearestStarts,
+  daysAhead, formatIstDate, formatIstTime, isStandardDuration, nearestStarts,
   needsDateConfirmation, parseSpokenTime, utcToIst,
 } from "@/lib/scheduling";
 
@@ -104,6 +104,10 @@ export async function POST(req: NextRequest) {
 
   return NextResponse.json({
     enabled: true, dayISO, durationMinutes, options, spoken,
+    // Given to the agent rather than left for it to phrase. Unprompted it said
+    // "aaravathu September" - the ordinal first - which is not a date anyone can
+    // follow at conversational speed.
+    daySpoken: formatIstDate(dayISO),
     none: options.length === 0,
     // Beyond a week, a time alone is ambiguous - the agent is told to say the
     // date back before booking.

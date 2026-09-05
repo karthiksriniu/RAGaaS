@@ -455,6 +455,27 @@ export async function getSchedulingConfig(tenantId: string): Promise<{
   };
 }
 
+/** Mon-Sat, 10am-8pm. Not a guess at any particular business, just a week that
+ * is obviously editable and obviously not "closed forever". */
+const DEFAULT_WEEK: ResourceHours[] = [1, 2, 3, 4, 5, 6].map((weekday) => ({
+  weekday, opensMinute: 600, closesMinute: 1200,
+}));
+
+/** Gives a tenant a working week if it has none.
+ *
+ * Called when appointments are switched on, because "enabled with no hours" is
+ * a state that looks configured and behaves as permanently closed: every
+ * resource inherits the business hours, no hours means closed, and the agent
+ * tells every caller that nobody is ever available. That is exactly what
+ * happened on 5 Sep - the dashboard displayed a default week it had never
+ * saved, so the screen looked right and the database was empty. */
+export async function ensureDefaultHours(tenantId: string): Promise<boolean> {
+  const existing = await getTenantHours(tenantId);
+  if (existing.length > 0) return false;
+  await setTenantHours(tenantId, DEFAULT_WEEK);
+  return true;
+}
+
 export async function setSchedulingConfig(tenantId: string, patch: {
   enabled?: boolean; defaultMinutes?: number; windowDays?: number; leadMinutes?: number;
 }): Promise<void> {

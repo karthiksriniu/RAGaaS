@@ -8,6 +8,8 @@ NOTE: voice-worker/Dockerfile copies files individually - a new module here MUST
 be added to it, or the image builds fine and every call dies on ImportError.
 """
 
+from __future__ import annotations
+
 # Sarvam's TTS takes a target_language_code and, per the plugin source, does NOT
 # check it against the text it is given. Hand it Tamil with "en-IN" and the
 # request simply produces nothing, which on a phone call is silence: the
@@ -38,6 +40,19 @@ _SCRIPT_RANGES: list[tuple[str, int, int]] = [
 # stray glyph in an otherwise English sentence should not flip the voice; three
 # is the length of the shortest real word anyone says ("ஆம்" - yes).
 _MIN_INDIC_CHARS = 3
+
+# Switching AWAY from the language currently in use needs much more than that.
+# Saaras with language="unknown" confuses the Indian scripts with each other -
+# observed on one call calling a Tamil turn Telugu, and later Malayalam, off a
+# word or two. Each wrong switch is a whole reply in a language the caller does
+# not speak, so the bar for changing is deliberately far higher than the bar for
+# reading a short answer.
+_MIN_INDIC_CHARS_TO_SWITCH = 10
+
+# ...and it has to say the same thing twice running. One confused turn is
+# common; two consecutive confused turns agreeing on the same wrong language is
+# not.
+_TURNS_TO_SWITCH = 2
 
 
 def detect_language_code(text: str, default: str = "en-IN") -> str:
@@ -94,3 +109,63 @@ LANGUAGE_NAMES: dict[str, str] = {
 
 def language_name(code: str) -> str:
     return LANGUAGE_NAMES.get(code, "English")
+
+
+class LanguageTracker:
+    """Decides when the conversation has actually changed language.
+
+    Detection per turn is noisy - the speech model genuinely mixes up the Indian
+    scripts - so acting on every turn made the agent hop between Tamil, Telugu
+    and Malayalam inside one call. This holds a candidate until it has been seen
+    on `_TURNS_TO_SWITCH` turns in a row with enough script behind it each time.
+
+    Deliberately asymmetric: staying put costs nothing, switching wrongly costs
+    a whole reply the caller cannot understand.
+    """
+
+    def __init__(self, current: str = "en-IN") -> None:
+        self.current = current
+        self._candidate: str | None = None
+        self._streak = 0
+
+    def observe(self, text: str) -> str | None:
+        """Returns the language to switch to, or None to stay put."""
+        counts: dict[str, int] = {}
+        for ch in text or "":
+            cp = ord(ch)
+            for code, lo, hi in _SCRIPT_RANGES:
+                if lo <= cp <= hi:
+                    counts[code] = counts.get(code, 0) + 1
+                    break
+
+        total = sum(counts.values())
+        candidate = max(counts.items(), key=lambda kv: kv[1])[0] if counts else "en-IN"
+
+        # Not enough evidence to mean anything either way. A short "ok" or a
+        # number must not reset a streak OR start one.
+        if candidate != "en-IN" and total < _MIN_INDIC_CHARS_TO_SWITCH:
+            return None
+        # Evidence of English means LATIN LETTERS, not characters. A read-back
+        # phone number is ten characters and zero letters, and treating it as
+        # "they have switched to English" would drop a Tamil conversation into
+        # English the moment the caller gave their number - which is exactly
+        # when they are most likely to be asked for it.
+        if candidate == "en-IN":
+            latin = sum(1 for ch in (text or "") if ch.isascii() and ch.isalpha())
+            if latin < _MIN_INDIC_CHARS_TO_SWITCH:
+                return None
+
+        if candidate == self.current:
+            self._candidate, self._streak = None, 0
+            return None
+
+        if candidate == self._candidate:
+            self._streak += 1
+        else:
+            self._candidate, self._streak = candidate, 1
+
+        if self._streak >= _TURNS_TO_SWITCH:
+            self.current = candidate
+            self._candidate, self._streak = None, 0
+            return self.current
+        return None

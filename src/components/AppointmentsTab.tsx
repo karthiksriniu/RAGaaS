@@ -133,6 +133,7 @@ export function AppointmentsTab() {
   const [windowDays, setWindowDays] = useState(30);
   const [leadMinutes, setLeadMinutes] = useState(60);
   const [businessHours, setBusinessHours] = useState<Hours[]>([]);
+  const [hoursSaved, setHoursSaved] = useState(true);
   const [resources, setResources] = useState<Resource[]>([]);
   const [resourceHours, setResourceHours] = useState<Record<string, Hours[]>>({});
 
@@ -152,6 +153,10 @@ export function AppointmentsTab() {
     setDefaultMinutes(d.defaultMinutes ?? 30);
     setWindowDays(d.windowDays ?? 30);
     setLeadMinutes(d.leadMinutes ?? 60);
+    // Prefilled when empty so saving is one click, but flagged - the screen
+    // showing a week the database does not have is what made a business look
+    // configured while its agent told every caller nobody was available.
+    setHoursSaved(Boolean(d.businessHours?.length));
     setBusinessHours(d.businessHours?.length ? d.businessHours : DEFAULT_WEEK);
     setResources(d.resources ?? []);
     setResourceHours(d.hours ?? {});
@@ -322,9 +327,16 @@ export function AppointmentsTab() {
           Your business hours. Everyone below follows these unless you give them their own.
           Times are IST.
         </p>
+        {!hoursSaved && (
+          <p className="kw-body-small mb-3" style={{ color: "var(--color-error)" }}>
+            These hours are not saved yet. Until you save them your agent treats the business as
+            closed and will tell callers nobody is available.
+          </p>
+        )}
         <HoursEditor value={businessHours} onChange={setBusinessHours} />
         <div className="mt-4">
-          <Button variant="filled" disabled={saving} onClick={() => saveConfig({ businessHours })}>
+          <Button variant="filled" disabled={saving}
+            onClick={async () => { await saveConfig({ businessHours }); setHoursSaved(true); }}>
             {saving ? "Saving…" : "Save hours"}
           </Button>
         </div>

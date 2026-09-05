@@ -25,7 +25,7 @@ import sys
 
 import aiohttp
 
-from lang import detect_language_code, language_name
+from lang import LanguageTracker, language_name
 from dotenv import load_dotenv
 from livekit.agents import (
     Agent,
@@ -294,7 +294,10 @@ class MyBizCareAgent(Agent):
         self._tenant = tenant
         # Mirrors the target_language_code the TTS was constructed with. The
         # greeting is English, so that is where every call starts.
-        self._tts_language = "en-IN"
+        # Always starts English: the greeting is English, and an agent that
+        # opens in a language the caller did not choose is worse than one that
+        # opens in the wrong one they can at least recognise.
+        self._language = LanguageTracker("en-IN")
         # A failing component fires the error event on every turn; the caller
         # should be apologised to and transferred exactly once.
         self._rescuing = False
@@ -319,9 +322,9 @@ class MyBizCareAgent(Agent):
         previous language, because the alternative is the silence this exists to
         fix.
         """
-        code = detect_language_code(text, self._tts_language)
-        if code == self._tts_language:
-            return
+        code = self._language.observe(text)
+        if code is None:
+            return  # not enough agreement yet - stay where we are
 
         # self.tts, NOT self.session.tts. The stt/llm/tts triple is passed to
         # Agent.__init__ above, not to AgentSession, so the session's own tts is
@@ -331,12 +334,11 @@ class MyBizCareAgent(Agent):
         # "exception on every turn".
         tts = getattr(self, "tts", None) or getattr(self.session, "tts", None)
         if tts is None or not hasattr(tts, "update_options"):
-            logger.warning("no TTS to switch to %s; leaving voice as %s", code, self._tts_language)
+            logger.warning("no TTS to switch to %s", code)
             return
         try:
             tts.update_options(target_language_code=code)
-            logger.info("switching voice to %s", code)
-            self._tts_language = code
+            logger.info("switching voice to %s after %d agreeing turns", code, 2)
         except Exception:
             logger.exception("could not switch TTS language to %s", code)
 
@@ -412,7 +414,7 @@ class MyBizCareAgent(Agent):
         directive per turn would grow the prompt without bound and drown the
         conversation it is meant to steer.
         """
-        name = language_name(self._tts_language)
+        name = language_name(self._language.current)
         turn_ctx.items[:] = [
             item for item in turn_ctx.items
             if _LANGUAGE_MARKER not in (getattr(item, "text_content", "") or "")
@@ -740,6 +742,12 @@ class SchedulingAgent(MyBizCareAgent):
             )
         else:
             lines.append("These times are free. Offer them to the caller in your own words.")
+
+        if data.get("daySpoken"):
+            lines.append(
+                f"When you say the date, say it as \"{data['daySpoken']}\" - month then number, "
+                "never the ordinal first."
+            )
 
         if data.get("confirmDate"):
             lines.append(

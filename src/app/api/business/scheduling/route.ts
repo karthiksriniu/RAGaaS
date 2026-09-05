@@ -2,7 +2,7 @@ import { NextRequest, NextResponse } from "next/server";
 import { businessTenantId } from "@/lib/businessAuth";
 import {
   getSchedulingConfig, setSchedulingConfig, listResources, getHours,
-  getTenantHours, setTenantHours, type ResourceHours,
+  getTenantHours, setTenantHours, ensureDefaultHours, type ResourceHours,
 } from "@/lib/appointments";
 import { isStandardDuration, STANDARD_DURATIONS } from "@/lib/scheduling";
 
@@ -80,6 +80,9 @@ export async function PATCH(req: NextRequest) {
   }
 
   await setSchedulingConfig(tenantId, patch);
+  // Switching it on with no hours stored means enabled-and-closed-forever, so
+  // seed a week rather than leave a business whose agent refuses every caller.
+  if (patch.enabled === true) await ensureDefaultHours(tenantId);
   return NextResponse.json({
     ...(await getSchedulingConfig(tenantId)),
     businessHours: await getTenantHours(tenantId),

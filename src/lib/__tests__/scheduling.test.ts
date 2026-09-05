@@ -9,6 +9,7 @@ import {
   slotStartsFor,
   availableStarts,
   formatIstTime,
+  formatIstDate,
   utilisation,
   effectiveHours,
   openSlotCount,
@@ -348,6 +349,24 @@ describe("parseSpokenTime", () => {
   it("returns null rather than guessing", () => {
     for (const bad of ["any time", "", null, undefined, "tomorrow", "25:00", "5:75 pm", "13 pm"]) {
       expect(parseSpokenTime(bad), String(bad)).toBeNull();
+    }
+  });
+});
+
+// Left to itself the model said "aaravathu September" in Tamil - the ordinal
+// first, which a caller cannot parse at conversational speed. Month then number
+// survives translation, because the month is a proper noun and the number is
+// just a number.
+describe("formatIstDate", () => {
+  it("puts the month before the number", () => {
+    expect(formatIstDate("2026-09-06")).toBe("Sunday, September 6");
+    expect(formatIstDate("2026-01-31")).toBe("Saturday, January 31");
+    expect(formatIstDate("2028-02-29")).toBe("Tuesday, February 29");
+  });
+
+  it("never renders an ordinal", () => {
+    for (const d of ["2026-09-01", "2026-09-02", "2026-09-03", "2026-09-11"]) {
+      expect(formatIstDate(d)).not.toMatch(/st|nd|rd|th\b/);
     }
   });
 });

@@ -45,9 +45,59 @@ check("Is Kumaresan available ஆ", "en-IN", "one stray Indic character")
 # Among Indian scripts it is a majority, so one foreign glyph does not win.
 check("இன்று இருக்கிறாரா क", "ta-IN", "Tamil with one Devanagari character")
 
+
+
+# --- switching, not just detecting -------------------------------------------
+# On a real call the agent hopped Tamil -> Telugu -> Malayalam inside one
+# conversation, off a word or two, because every turn was acted on. Each wrong
+# switch is a whole reply the caller cannot understand.
+from lang import LanguageTracker  # noqa: E402
+
+TAMIL = "இன்று அப்பாயிண்ட்மென்ட் கிடைக்குமா என்று சொல்லுங்கள்"
+TELUGU = "ఈరోజు అపాయింట్‌మెంట్ దొరుకుతుందా చెప్పండి"
+ENGLISH = "Could you tell me if an appointment is available today please"
+
+
+def track(seq, start="en-IN"):
+    t = LanguageTracker(start)
+    return [t.observe(x) for x in seq], t.current
+
+
+# One turn is never enough.
+sw, cur = track([TAMIL])
+if sw != [None] or cur != "en-IN":
+    failures.append(f"switched on a single turn: {sw} -> {cur}")
+
+# Two agreeing turns are.
+sw, cur = track([TAMIL, TAMIL])
+if cur != "ta-IN":
+    failures.append(f"did not switch after two agreeing Tamil turns: {sw} -> {cur}")
+
+# The exact observed failure: one confused turn between two good ones must not
+# move the conversation to Telugu.
+sw, cur = track([TAMIL, TELUGU, TAMIL, TAMIL])
+if cur != "ta-IN":
+    failures.append(f"a single confused turn changed the language: {sw} -> {cur}")
+
+# Short answers carry no evidence and must neither switch nor break a streak.
+sw, cur = track([TAMIL, "ஆம்", TAMIL])
+if cur != "ta-IN":
+    failures.append(f"a short answer broke the streak: {sw} -> {cur}")
+
+# A phone number is not someone switching to English.
+t = LanguageTracker("ta-IN")
+t.observe("9840816035"); t.observe("9840816035")
+if t.current != "ta-IN":
+    failures.append("a phone number switched the language to English")
+
+# A genuine, sustained switch back to English still works.
+sw, cur = track([ENGLISH, ENGLISH], start="ta-IN")
+if cur != "en-IN":
+    failures.append(f"could not switch back to English: {sw} -> {cur}")
+
 if failures:
     print("FAIL")
     for f in failures:
         print(" -", f)
     sys.exit(1)
-print("language detection OK")
+print("language switching OK")

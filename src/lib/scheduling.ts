@@ -197,6 +197,22 @@ export function availableStarts(input: AvailabilityInput): Date[] {
   return out;
 }
 
+/** "Sunday, September 6" - for the agent to say aloud.
+ *
+ * Month before day, deliberately. Left to itself the model produced
+ * "aaravathu September" in Tamil - the ordinal first, which a caller cannot
+ * parse as a date. Month-then-number survives translation into every language
+ * here, because the month is a proper noun and the number is just a number. */
+export function formatIstDate(dayISO: string): string {
+  const [y, m, d] = dayISO.split("-").map(Number);
+  const weekday = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"][
+    new Date(Date.UTC(y, m - 1, d)).getUTCDay()
+  ];
+  const month = ["January", "February", "March", "April", "May", "June", "July",
+                 "August", "September", "October", "November", "December"][m - 1];
+  return `${weekday}, ${month} ${d}`;
+}
+
 /** "5:30 pm" - for the agent to say and the dashboard to print. */
 export function formatIstTime(instant: Date): string {
   const { minuteOfDay } = utcToIst(instant);
