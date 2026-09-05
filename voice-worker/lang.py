@@ -71,3 +71,26 @@ def detect_language_code(text: str, default: str = "en-IN") -> str:
     if sum(counts.values()) < _MIN_INDIC_CHARS:
         return default
     return max(counts.items(), key=lambda kv: kv[1])[0]
+
+
+# For telling the model which language to WRITE in. Setting the TTS language
+# alone does nothing about this: target_language_code says what language the
+# text already is, it does not translate. Observed on a real call - the voice
+# switched to Tamil correctly and the caller still heard English, because the
+# model had written English and Sarvam faithfully read it out.
+LANGUAGE_NAMES: dict[str, str] = {
+    "en-IN": "English",
+    "ta-IN": "Tamil",
+    "ml-IN": "Malayalam",
+    "te-IN": "Telugu",
+    "kn-IN": "Kannada",
+    "bn-IN": "Bengali",
+    "gu-IN": "Gujarati",
+    "pa-IN": "Punjabi",
+    "or-IN": "Odia",
+    "hi-IN": "Hindi",
+}
+
+
+def language_name(code: str) -> str:
+    return LANGUAGE_NAMES.get(code, "English")

@@ -63,6 +63,39 @@ Use the transfer_to_human tool when the caller asks for a person, when you have 
 
 Speak in the language the caller uses. If they switch languages, switch with them.`;
 
+const WEEKDAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+const MONTHS = ["January", "February", "March", "April", "May", "June",
+                "July", "August", "September", "October", "November", "December"];
+
+/** Tells the model what day it is.
+ *
+ * Without this it does not know, and it does not say so - it guesses, from
+ * whatever year was common in its training data. Observed on a real call: a
+ * caller asked for the 6th of September, the model passed a date a year in the
+ * past, and the agent told them their date had already gone by. It repeated
+ * that for every date they offered, including "tomorrow".
+ *
+ * IST is computed arithmetically at a fixed +5:30 rather than through the
+ * server's timezone: Vercel runs in UTC, and an agent that thinks it is still
+ * yesterday evening gets "today" wrong for every caller after half past six. */
+export function todayLine(now: Date = new Date()): string {
+  const ist = new Date(now.getTime() + 330 * 60_000);
+  const weekday = WEEKDAYS[ist.getUTCDay()];
+  const day = ist.getUTCDate();
+  const month = MONTHS[ist.getUTCMonth()];
+  const year = ist.getUTCFullYear();
+  const hour24 = ist.getUTCHours();
+  const mins = ist.getUTCMinutes();
+  const suffix = hour24 < 12 ? "am" : "pm";
+  const hour12 = hour24 % 12 === 0 ? 12 : hour24 % 12;
+  const time = mins === 0 ? `${hour12} ${suffix}` : `${hour12}:${String(mins).padStart(2, "0")} ${suffix}`;
+
+  return [
+    `Today is ${weekday}, ${day} ${month} ${year}, and the time is ${time}. All dates and times are India Standard Time.`,
+    `Work out "today", "tomorrow", "this Saturday" and "next week" from that date. When you give a date to a tool, write it as ${year}-MM-DD, and never use a year earlier than ${year} unless the caller explicitly named one.`,
+  ].join(" ");
+}
+
 /** Composes the voice agent's instructions for one tenant.
  *
  * The tenant's own guidance is appended AFTER the global rules, so it shapes
@@ -71,9 +104,14 @@ Speak in the language the caller uses. If they switch languages, switch with the
  * buildSystemPrompt() uses for the text path. */
 export function buildVoiceInstructions(
   businessName: string,
-  tenantConfigMd: string | null
+  tenantConfigMd: string | null,
+  now: Date = new Date()
 ): string {
-  const sections = [`You are answering calls for ${businessName}.`, VOICE_RULES];
+  const sections = [
+    `You are answering calls for ${businessName}.`,
+    todayLine(now),
+    VOICE_RULES,
+  ];
   if (tenantConfigMd?.trim()) {
     sections.push(`Business-specific guidance for how to answer:\n${tenantConfigMd.trim()}`);
   }

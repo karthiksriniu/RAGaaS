@@ -92,7 +92,7 @@ export async function POST(req: NextRequest) {
     tenantId: tenant.id,
     businessName: tenant.name,
     greeting: buildVoiceGreeting(tenant.name),
-    instructions: buildVoiceInstructions(tenant.name, tenant.answerConfigMd),
+    instructions: buildVoiceInstructions(tenant.name, tenant.answerConfigMd, new Date()),
     voice: { speaker: voice.speaker, pace: voice.pace, temperature: voice.temperature },
     // Read fresh here on every inbound call, exactly like the voice settings
     // above, which is what makes a number saved in the dashboard apply to the

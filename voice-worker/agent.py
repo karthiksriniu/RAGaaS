@@ -25,7 +25,7 @@ import sys
 
 import aiohttp
 
-from lang import detect_language_code
+from lang import detect_language_code, language_name
 from dotenv import load_dotenv
 from livekit.agents import (
     Agent,
@@ -70,6 +70,7 @@ SILENCE_HANGUP_SECONDS = float(os.getenv("SILENCE_HANGUP_SECONDS", "8"))
 # Only ever sent to the model, never spoken, and the prompt tells it not to
 # describe its sources - so it does not leak to the caller.
 _CONTEXT_MARKER = "[kb-context]"
+_LANGUAGE_MARKER = "[[mybizcare-language]]"
 
 # Below this, a partial transcript is too vague to retrieve anything useful
 # ("what is the", "can you") and the lookup would only be thrown away.
@@ -397,6 +398,34 @@ class MyBizCareAgent(Agent):
         if not await self._warm_transfer(expert, self.session.history):
             logger.error("rescue transfer failed for tenant %s", self._tenant.tenant_id)
 
+    def _set_language_directive(self, turn_ctx) -> None:
+        """Name the language the model must WRITE in, every turn.
+
+        The standing rule in the prompt ("speak in the language the caller
+        uses") loses to the model's default. On a real call the voice switched
+        to Tamil correctly and the caller still heard English: TTS was speaking
+        Tamil-flavoured English because the model had written English.
+        target_language_code says what language the text IS - it does not
+        translate. So the model has to be told, in the turn, and by name.
+
+        Replaced rather than appended, like the retrieval block above: a
+        directive per turn would grow the prompt without bound and drown the
+        conversation it is meant to steer.
+        """
+        name = language_name(self._tts_language)
+        turn_ctx.items[:] = [
+            item for item in turn_ctx.items
+            if _LANGUAGE_MARKER not in (getattr(item, "text_content", "") or "")
+        ]
+        turn_ctx.add_message(
+            role="assistant",
+            content=(
+                f"{_LANGUAGE_MARKER} The caller is speaking {name}. Write your entire next "
+                f"reply in {name}, in the {name} script. Do not reply in English unless the "
+                f"caller is speaking English."
+            ),
+        )
+
     async def _retrieve(self, question: str) -> str:
         """The tenant's matching knowledge-base passages, or "" if none.
 
@@ -484,6 +513,7 @@ class MyBizCareAgent(Agent):
         # BEFORE the length check below, deliberately. A one-word Tamil "yes" is
         # still Tamil, and the reply to it has to be speakable.
         self._sync_tts_language(question)
+        self._set_language_directive(turn_ctx)
 
         if len(question) < 3:
             return  # "yes", "ok" - nothing to look up
