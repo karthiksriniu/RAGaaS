@@ -374,7 +374,17 @@ export async function createSubscription(
         // leave the customer mandated but unpaid, with a licensed tenant and no
         // money taken for it.
         authorization_amount_refund: false,
-        payment_methods: ["upi"],
+        // payment_methods is DELIBERATELY ABSENT.
+        //
+        // Sending ["upi"] restricts the hosted checkout to UPI Autopay, and if
+        // that one mode is not enabled on the merchant account the page has
+        // nothing to offer and dead-ends on "No payment mode available" - which
+        // reads like an account problem but is this line.
+        //
+        // Omitting it lets Cashfree offer every mandate-capable mode the account
+        // actually has (UPI Autopay, eNACH, cards). A hardcoded list would have
+        // to be kept in step with what the account supports, and would fail the
+        // same way the day one of them was turned off.
       },
       subscription_meta: {
         return_url: input.returnUrl,
