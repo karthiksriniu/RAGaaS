@@ -6,9 +6,10 @@ import { Card } from "@/components/kiowa/Card";
 import { TextField } from "@/components/kiowa/TextField";
 import { Select } from "@/components/kiowa/Select";
 
-// The Appointments tab. Lives here rather than in app/page.tsx because that
-// file is already four sections long, and this one carries its own fetching,
-// its own editing state and a week grid.
+// Everything you SET UP about appointments: whether they are taken at all, how
+// long they are, opening hours, and who can be booked. The diary itself is
+// AppointmentsDiary - separate because configuring a business and reading its
+// day are different jobs done at different times by different people.
 
 const DAYS = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
 const KINDS = [
@@ -20,35 +21,17 @@ const KINDS = [
 
 interface Hours { weekday: number; opensMinute: number; closesMinute: number }
 interface Resource { id: string; name: string; kind: string; capacity: number; active: boolean; sortOrder: number }
-interface Appointment {
-  id: string; resourceId: string; resourceName?: string; startsAt: string;
-  durationMinutes: number; customerName: string | null; customerPhone: string;
-  partySize: number; service: string | null; status: string; source: string;
-}
-interface UtilisationRow { resource: Resource; bookedSlots: number; openSlots: number; ratio: number | null }
-
 /** Minutes-from-midnight to "HH:MM", the value an <input type="time"> wants.
  * Past-midnight closing (>1440) wraps for display but keeps its real value. */
 function toTimeValue(minute: number): string {
   const m = ((minute % 1440) + 1440) % 1440;
   return `${String(Math.floor(m / 60)).padStart(2, "0")}:${String(m % 60).padStart(2, "0")}`;
 }
+
 function fromTimeValue(value: string): number | null {
   const m = /^(\d{2}):(\d{2})$/.exec(value);
   if (!m) return null;
   return Number(m[1]) * 60 + Number(m[2]);
-}
-/** IST day string for an instant, matching the server's utcToIst. */
-function istDay(d: Date): string {
-  return new Date(d.getTime() + 330 * 60_000).toISOString().slice(0, 10);
-}
-function istTime(iso: string): string {
-  const shifted = new Date(new Date(iso).getTime() + 330 * 60_000);
-  const h24 = shifted.getUTCHours();
-  const mins = shifted.getUTCMinutes();
-  const suffix = h24 < 12 ? "am" : "pm";
-  const h12 = h24 % 12 === 0 ? 12 : h24 % 12;
-  return mins === 0 ? `${h12} ${suffix}` : `${h12}:${String(mins).padStart(2, "0")} ${suffix}`;
 }
 
 function setWeekday(list: Hours[], weekday: number, patch: Partial<Hours> | null): Hours[] {
@@ -118,11 +101,29 @@ function HoursEditor({ value, onChange }: { value: Hours[]; onChange: (h: Hours[
   );
 }
 
+/** A caption above an unlabelled control.
+ *
+ * Kiowa's TextField puts its label above the box and Select puts its inside, so
+ * a row mixing the two comes out 74px next to 56px however it is aligned.
+ * Wrapping both in the same caption and suppressing their own labels is the
+ * only way the columns line up. */
+function Field({ label, width, children }: { label: string; width: string; children: React.ReactNode }) {
+  return (
+    <div style={{ flex: width, minWidth: 0 }}>
+      <span className="kw-body-small" style={{ display: "block", marginBottom: ".25rem",
+            color: "var(--color-on-surface-variant)" }}>
+        {label}
+      </span>
+      {children}
+    </div>
+  );
+}
+
 const DEFAULT_WEEK: Hours[] = [1, 2, 3, 4, 5, 6].map((weekday) => ({
   weekday, opensMinute: 600, closesMinute: 1200,
 }));
 
-export function AppointmentsTab() {
+export function AppointmentsConfigTab() {
   const [loading, setLoading] = useState(true);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -141,9 +142,6 @@ export function AppointmentsTab() {
   const [newKind, setNewKind] = useState("person");
   const [newCapacity, setNewCapacity] = useState("1");
 
-  const [day, setDay] = useState(() => istDay(new Date()));
-  const [appointments, setAppointments] = useState<Appointment[]>([]);
-  const [utilisation, setUtilisation] = useState<UtilisationRow[]>([]);
 
   const loadConfig = useCallback(async () => {
     const res = await fetch("/api/business/scheduling");
@@ -162,8 +160,6 @@ export function AppointmentsTab() {
     setResourceHours(d.hours ?? {});
   }, []);
 
-  const [dayNonce, setDayNonce] = useState(0);
-  const reloadDay = useCallback(() => setDayNonce((n) => n + 1), []);
 
   useEffect(() => {
     (async () => {
@@ -173,20 +169,6 @@ export function AppointmentsTab() {
     })();
   }, [loadConfig]);
 
-  useEffect(() => {
-    // Cancellation, not just tidiness: clicking through dates fires overlapping
-    // requests, and without this the slowest one wins and paints the wrong day.
-    let cancelled = false;
-    (async () => {
-      const res = await fetch(`/api/business/appointments?from=${day}&to=${day}`);
-      if (!res.ok || cancelled) return;
-      const d = await res.json();
-      if (cancelled) return;
-      setAppointments(d.appointments ?? []);
-      setUtilisation(d.utilisation ?? []);
-    })();
-    return () => { cancelled = true; };
-  }, [day, dayNonce]);
 
   async function saveConfig(patch: Record<string, unknown>) {
     setSaving(true); setError(null); setNotice(null);
@@ -240,10 +222,6 @@ export function AppointmentsTab() {
     } finally { setSaving(false); }
   }
 
-  async function cancelAppointment(id: string) {
-    const res = await fetch(`/api/business/appointments?id=${encodeURIComponent(id)}`, { method: "DELETE" });
-    if (res.ok) reloadDay();
-  }
 
   if (loading) return <p className="kw-body-medium">Loading…</p>;
 
@@ -360,24 +338,23 @@ export function AppointmentsTab() {
                     different height and a fixed-width wrapper gets overrun by
                     the field's own minimum - which is what put "Seats" on top
                     of the type dropdown. */}
-                <div style={{ display: "flex", gap: ".75rem", alignItems: "flex-end", flexWrap: "wrap" }}>
-                  <div style={{ flex: "2 1 180px", minWidth: 0 }}>
+                <div style={{ display: "flex", gap: ".75rem", alignItems: "flex-start", flexWrap: "wrap" }}>
+                  <Field label="Name" width="2 1 180px">
                     <TextField
-                      label="Name" fullWidth value={r.name}
+                      fullWidth value={r.name}
                       onChange={(e) => setResources((rs) => rs.map((x) => x.id === r.id ? { ...x, name: e.target.value } : x))}
                     />
-                  </div>
-                  <div style={{ flex: "1 1 130px", minWidth: 0 }}>
-                    <Select label="Type" value={r.kind} options={KINDS}
-                      style={{ width: "100%" }}
+                  </Field>
+                  <Field label="Type" width="1 1 130px">
+                    <Select value={r.kind} options={KINDS} style={{ width: "100%" }}
                       onChange={(v) => patchResource(r.id, { kind: v })} />
-                  </div>
-                  <div style={{ flex: "0 1 100px", minWidth: 0 }}>
+                  </Field>
+                  <Field label="Seats" width="0 1 100px">
                     <TextField
-                      label="Seats" type="number" fullWidth value={String(r.capacity)}
+                      type="number" fullWidth value={String(r.capacity)}
                       onChange={(e) => setResources((rs) => rs.map((x) => x.id === r.id ? { ...x, capacity: Number(e.target.value) || 1 } : x))}
                     />
-                  </div>
+                  </Field>
                 </div>
 
                 {/* Actions on their own row, so they neither stretch to the
@@ -425,85 +402,27 @@ export function AppointmentsTab() {
           })}
         </div>
 
-        <div className="mt-5" style={{ display: "flex", gap: ".75rem", alignItems: "flex-end", flexWrap: "wrap" }}>
-          <div style={{ flex: "2 1 180px", minWidth: 0 }}>
-            <TextField label="Name" fullWidth value={newName}
-              onChange={(e) => setNewName(e.target.value)} placeholder="Priya, or Table 1" />
-          </div>
-          <div style={{ flex: "1 1 130px", minWidth: 0 }}>
-            <Select label="Type" value={newKind} options={KINDS}
-              style={{ width: "100%" }} onChange={setNewKind} />
-          </div>
-          <div style={{ flex: "0 1 100px", minWidth: 0 }}>
-            <TextField label="Seats" type="number" fullWidth value={newCapacity}
+        <div className="mt-5" style={{ display: "flex", gap: ".75rem", alignItems: "flex-start", flexWrap: "wrap" }}>
+          <Field label="Name" width="2 1 180px">
+            <TextField fullWidth value={newName}
+              onChange={(e) => setNewName(e.target.value)} placeholder="Kumaresan, or Table 1" />
+          </Field>
+          <Field label="Type" width="1 1 130px">
+            <Select value={newKind} options={KINDS} style={{ width: "100%" }} onChange={setNewKind} />
+          </Field>
+          <Field label="Seats" width="0 1 100px">
+            <TextField type="number" fullWidth value={newCapacity}
               onChange={(e) => setNewCapacity(e.target.value)} />
+          </Field>
+          {/* Nudged down so it sits on the controls' baseline, not the captions'. */}
+          <div style={{ paddingTop: "1.6rem" }}>
+            <Button variant="filled" disabled={saving || !newName.trim()} onClick={addResource}>Add</Button>
           </div>
-          <Button variant="filled" disabled={saving || !newName.trim()} onClick={addResource}>Add</Button>
         </div>
       </Card>
 
-      <Card variant="filled" padding={20}>
-        <div className="flex items-center justify-between gap-3 flex-wrap mb-4">
-          <p className="kw-title-medium">Diary</p>
-          <input
-            type="date" value={day} onChange={(e) => setDay(e.target.value)}
-            style={{ padding: ".4rem .6rem", borderRadius: "var(--radius-sm)",
-                     border: "1px solid var(--color-outline-variant)", background: "var(--color-surface)" }}
-          />
-        </div>
-
-        {appointments.length === 0 ? (
-          <p className="kw-body-medium" style={{ color: "var(--color-on-surface-variant)" }}>
-            Nothing booked for this day.
-          </p>
-        ) : (
-          <div className="flex flex-col gap-2">
-            {appointments.map((a) => (
-              <div key={a.id} className="flex items-center gap-3 flex-wrap"
-                   style={{ padding: ".6rem 0", borderBottom: "1px solid var(--color-outline-variant)" }}>
-                <span className="kw-title-medium" style={{ width: 90 }}>{istTime(a.startsAt)}</span>
-                <span className="kw-body-medium" style={{ flex: "1 1 120px" }}>{a.resourceName}</span>
-                <span className="kw-body-medium" style={{ flex: "1 1 160px" }}>
-                  {a.customerName || "—"} · {a.customerPhone}
-                  {a.partySize > 1 && ` · ${a.partySize} people`}
-                </span>
-                <span className="kw-body-small" style={{ color: "var(--color-on-surface-variant)" }}>
-                  {a.service || ""} {a.status !== "booked" ? `(${a.status})` : ""}
-                </span>
-                {a.status === "booked" && (
-                  <Button variant="text" onClick={() => cancelAppointment(a.id)}>Cancel</Button>
-                )}
-              </div>
-            ))}
-          </div>
-        )}
-
-        {utilisation.length > 0 && (
-          <div className="mt-5">
-            <p className="kw-title-medium mb-2">Utilisation</p>
-            <div className="flex flex-col gap-2">
-              {utilisation.map((u) => (
-                <div key={u.resource.id} className="flex items-center gap-3">
-                  <span className="kw-body-medium" style={{ width: 140 }}>{u.resource.name}</span>
-                  <span style={{ flex: 1, height: 6, background: "var(--color-surface-container-highest)",
-                                 borderRadius: "var(--radius-full)", overflow: "hidden" }}>
-                    <span style={{ display: "block", height: "100%", width: `${(u.ratio ?? 0) * 100}%`,
-                                   background: "var(--color-primary)" }} />
-                  </span>
-                  <span className="kw-body-small" style={{ width: 110, textAlign: "right",
-                        color: "var(--color-on-surface-variant)" }}>
-                    {/* null is "closed", which is not the same fact as 0% and
-                        must not be drawn as an empty bar with a number on it. */}
-                    {u.ratio === null ? "Closed" : `${Math.round(u.ratio * 100)}% of ${u.openSlots} slots`}
-                  </span>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
-      </Card>
     </>
   );
 }
 
-export default AppointmentsTab;
+export default AppointmentsConfigTab;
