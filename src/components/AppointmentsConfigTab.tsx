@@ -227,11 +227,6 @@ export function AppointmentsConfigTab() {
 
   return (
     <>
-      <h1 className="kw-headline-small mb-1">Appointments</h1>
-      <p className="kw-body-medium mb-6" style={{ color: "var(--color-on-surface-variant)" }}>
-        Let your agent take bookings on the phone, and see the diary here.
-      </p>
-
       {error && <p className="kw-body-small mb-3" style={{ color: "var(--color-error)" }}>{error}</p>}
       {notice && <p className="kw-body-small mb-3" style={{ color: "var(--color-primary)" }}>{notice}</p>}
 
@@ -345,8 +340,13 @@ export function AppointmentsConfigTab() {
                       onChange={(e) => setResources((rs) => rs.map((x) => x.id === r.id ? { ...x, name: e.target.value } : x))}
                     />
                   </Field>
-                  <Field label="Type" width="1 1 130px">
-                    <Select value={r.kind} options={KINDS} style={{ width: "100%" }}
+                  <Field label="Type" width="1 1 150px">
+                    {/* minWidth:0 is the load-bearing part. Select sets
+                        minWidth:220 on its own container, so width:100% alone
+                        leaves it 220px wide inside a 130px column and it
+                        overlaps Seats. */}
+                    <Select value={r.kind} options={KINDS}
+                      style={{ width: "100%", minWidth: 0 }}
                       onChange={(v) => patchResource(r.id, { kind: v })} />
                   </Field>
                   <Field label="Seats" width="0 1 100px">
@@ -407,8 +407,8 @@ export function AppointmentsConfigTab() {
             <TextField fullWidth value={newName}
               onChange={(e) => setNewName(e.target.value)} placeholder="Kumaresan, or Table 1" />
           </Field>
-          <Field label="Type" width="1 1 130px">
-            <Select value={newKind} options={KINDS} style={{ width: "100%" }} onChange={setNewKind} />
+          <Field label="Type" width="1 1 150px">
+            <Select value={newKind} options={KINDS} style={{ width: "100%", minWidth: 0 }} onChange={setNewKind} />
           </Field>
           <Field label="Seats" width="0 1 100px">
             <TextField type="number" fullWidth value={newCapacity}

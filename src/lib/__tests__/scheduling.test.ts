@@ -128,8 +128,22 @@ describe("availableStarts", () => {
     now: new Date("2026-01-01T00:00:00Z"),
   };
 
-  it("offers every grid start that fits", () => {
+  // A whole appointment apart, not a grid slot apart: "ten, quarter past, half
+  // past, quarter to" is not a choice, it is a list.
+  it("offers starts one appointment apart", () => {
     const starts = availableStarts({ ...base, durationMinutes: 30 });
+    expect(starts.map((d) => utcToIst(d).minuteOfDay)).toEqual([600, 630, 660, 690]);
+  });
+
+  it("offers hourly starts for an hour-long appointment", () => {
+    const starts = availableStarts({ ...base, durationMinutes: 60 });
+    expect(starts.map((d) => utcToIst(d).minuteOfDay)).toEqual([600, 660]);
+  });
+
+  // The dashboard can still put a booking on any 15-minute boundary; only what
+  // the agent reads out is coarsened.
+  it("can still be stepped by the grid when asked", () => {
+    const starts = availableStarts({ ...base, durationMinutes: 30, stepMinutes: 15 });
     expect(starts.map((d) => utcToIst(d).minuteOfDay)).toEqual([600, 615, 630, 645, 660, 675, 690]);
   });
 
@@ -143,14 +157,12 @@ describe("availableStarts", () => {
   });
 
   it("skips a start whose LATER slots are taken", () => {
-    // 10:30 is booked. A 60-minute slot at 10:00 needs 10:00-11:00, so it must go.
+    // 10:30 is booked. A 60-minute slot at 10:00 needs 10:00-11:00, so it goes.
     const taken = new Set([istToUtc(day, 630).getTime()]);
     const starts = availableStarts({ ...base, durationMinutes: 60, takenSlotMs: taken });
     const minutes = starts.map((d) => utcToIst(d).minuteOfDay);
     expect(minutes).not.toContain(600); // would span the taken slot
-    expect(minutes).not.toContain(615);
-    expect(minutes).not.toContain(630);
-    expect(minutes).toContain(645); // 10:45-11:45 is clear
+    expect(minutes).toContain(660);     // 11:00-12:00 is clear
   });
 
   it("rounds an odd opening time up rather than opening early", () => {
@@ -171,13 +183,18 @@ describe("availableStarts", () => {
     expect(availableStarts({ ...base, durationMinutes: 15, limit: 3 })).toHaveLength(3);
   });
 
+  it("rounds an odd opening time up rather than opening early, at any step", () => {
+    const starts = availableStarts({ ...base, opensMinute: 610, durationMinutes: 60 });
+    expect(utcToIst(starts[0]).minuteOfDay).toBe(615);
+  });
+
   it("returns nothing when closed", () => {
     expect(availableStarts({ ...base, opensMinute: 600, closesMinute: 600, durationMinutes: 30 })).toEqual([]);
   });
 
   it("handles past-midnight closing", () => {
     const starts = availableStarts({
-      ...base, opensMinute: 1380, closesMinute: 1500, durationMinutes: 60, // 23:00 to 01:00
+      ...base, opensMinute: 1380, closesMinute: 1500, durationMinutes: 60, stepMinutes: 15,
     });
     // 23:00, 23:15, 23:30, 23:45, 00:00 - the last starts at midnight and still
     // finishes by the 01:00 close.

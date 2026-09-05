@@ -160,6 +160,15 @@ export interface AvailabilityInput {
   /** Cap on how many are returned - a voice agent reading out forty times is
    * useless, and the caller only needs the next few. */
   limit?: number;
+  /** How far apart the offered starts are. Defaults to the appointment length,
+   * so a 30-minute booking is offered at 10:00 and 10:30 rather than every
+   * quarter hour.
+   *
+   * The GRID is still 15 minutes - that is what appointment_slots is keyed on,
+   * and it is why a 30-minute booking can still sit at 10:15 if the dashboard
+   * puts it there. This only governs what the agent reads out, because "ten,
+   * quarter past, half past, quarter to" is not a choice, it is a list. */
+  stepMinutes?: number;
 }
 
 /** Bookable start times for one resource on one day.
@@ -180,8 +189,9 @@ export function availableStarts(input: AvailabilityInput): Date[] {
   // Start on the grid at or after opening - an odd opening time like 09:10 is
   // rounded up to 09:15 rather than offering a slot before the doors open.
   const firstMinute = Math.ceil(opensMinute / SLOT_MINUTES) * SLOT_MINUTES;
+  const step = input.stepMinutes ?? durationMinutes;
 
-  for (let minute = firstMinute; minute + durationMinutes <= closesMinute; minute += SLOT_MINUTES) {
+  for (let minute = firstMinute; minute + durationMinutes <= closesMinute; minute += step) {
     const start = istToUtc(dayISO, minute);
     if (start.getTime() < nowMs) continue;
 

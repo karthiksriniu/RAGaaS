@@ -864,7 +864,8 @@ class SchedulingAgent(MyBizCareAgent):
         self._offered = []
         who = chosen.get("resourceName") or ""
         return (f"Booked for {data.get('spoken')}{' with ' + who if who else ''}. "
-                "Confirm it back to the caller in one short sentence.")
+                "Say that back once, in one short sentence, and then stop - do not "
+                "re-confirm the time again or ask anything further about it.")
 
 
 async def entrypoint(ctx: JobContext) -> None:

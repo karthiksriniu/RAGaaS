@@ -4,6 +4,7 @@ import { useCallback, useEffect, useMemo, useState } from "react";
 import { Button } from "@/components/kiowa/Button";
 import { Card } from "@/components/kiowa/Card";
 import { Select } from "@/components/kiowa/Select";
+import { AppointmentsConfigTab } from "@/components/AppointmentsConfigTab";
 
 // The diary: what is actually booked, laid out as a day against the people who
 // can be booked. Separate from AppointmentsConfigTab because configuring a
@@ -74,6 +75,8 @@ export function AppointmentsDiary() {
   const [utilisation, setUtilisation] = useState<UtilisationRow[]>([]);
   const [loading, setLoading] = useState(true);
   const [showList, setShowList] = useState(false);
+  const [showConfig, setShowConfig] = useState(false);
+  const [nextUp, setNextUp] = useState<Appointment | null>(null);
   const [filterResource, setFilterResource] = useState("all");
 
   useEffect(() => {
@@ -160,6 +163,22 @@ export function AppointmentsDiary() {
 
   const isToday = day === istDay(new Date());
 
+  useEffect(() => {
+    let cancelled = false;
+    (async () => {
+      const today = istDay(new Date());
+      const res = await fetch(`/api/business/appointments?from=${today}&to=${shiftDay(today, 60)}`);
+      if (!res.ok || cancelled) return;
+      const d = await res.json();
+      if (cancelled) return;
+      const upcoming = (d.appointments ?? [])
+        .filter((a: Appointment) => a.status === "booked" && new Date(a.startsAt) >= new Date())
+        .sort((a: Appointment, b: Appointment) => a.startsAt.localeCompare(b.startsAt));
+      setNextUp(upcoming[0] ?? null);
+    })();
+    return () => { cancelled = true; };
+  }, [appointments]);
+
   return (
     <>
       <h1 className="kw-headline-small mb-1">Appointments</h1>
@@ -167,10 +186,27 @@ export function AppointmentsDiary() {
         {longDate(day)}{isToday ? " · today" : ""}
       </p>
 
+      <Card variant="outlined" padding={0} style={{ marginBottom: "1rem" }}>
+        <button type="button" onClick={() => setShowConfig((v) => !v)}
+          style={{ width: "100%", display: "flex", alignItems: "center", justifyContent: "space-between",
+                   gap: "1rem", padding: "0.9rem 1.1rem", background: "none", border: "none",
+                   cursor: "pointer", textAlign: "left" }}>
+          <span className="kw-title-medium">Appointments config</span>
+          <span className="material-symbols-rounded" style={{ color: "var(--color-on-surface-variant)" }}>
+            {showConfig ? "expand_less" : "expand_more"}
+          </span>
+        </button>
+        {showConfig && (
+          <div style={{ padding: "0 1.1rem 1.1rem", borderTop: "1px solid var(--color-outline-variant)" }}>
+            <div className="mt-4"><AppointmentsConfigTab /></div>
+          </div>
+        )}
+      </Card>
+
       <div className="flex items-center gap-2 flex-wrap mb-4">
-        <Button variant="outlined" onClick={() => setDay((d) => shiftDay(d, -1))}>Previous</Button>
+        <Button variant="outlined" onClick={() => setDay((d) => shiftDay(d, -1))} aria-label="Previous day">‹</Button>
         <Button variant="outlined" onClick={() => setDay(istDay(new Date()))}>Today</Button>
-        <Button variant="outlined" onClick={() => setDay((d) => shiftDay(d, 1))}>Next</Button>
+        <Button variant="outlined" onClick={() => setDay((d) => shiftDay(d, 1))} aria-label="Next day">›</Button>
         <input
           type="date" value={day} onChange={(e) => e.target.value && setDay(e.target.value)}
           style={{ padding: ".45rem .6rem", borderRadius: "var(--radius-sm)",
@@ -240,6 +276,24 @@ export function AppointmentsDiary() {
               ))}
             </div>
           )}
+        </Card>
+      )}
+
+      {/* Shown when the day on screen is empty but something IS booked later.
+          Without it a caller books next Friday, the owner looks at today, sees
+          nothing, and concludes the agent did not take the booking. */}
+      {nextUp && live.length === 0 && istDay(new Date(nextUp.startsAt)) !== day && (
+        <Card variant="filled" padding={16} style={{ marginTop: "1rem" }}>
+          <div className="flex items-center justify-between gap-3 flex-wrap">
+            <span className="kw-body-medium">
+              Nothing on this day. Next booking is{" "}
+              <strong>{longDate(istDay(new Date(nextUp.startsAt)))} at {minuteLabel(istMinuteOfDay(nextUp.startsAt))}</strong>
+              {nextUp.resourceName ? ` with ${nextUp.resourceName}` : ""}.
+            </span>
+            <Button variant="filled" onClick={() => setDay(istDay(new Date(nextUp.startsAt)))}>
+              Go to that day
+            </Button>
+          </div>
         </Card>
       )}
 
