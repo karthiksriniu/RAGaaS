@@ -1,5 +1,5 @@
 import { NextRequest, NextResponse } from "next/server";
-import { timingSafeEqual } from "node:crypto";
+import { checkWorkerToken } from "@/lib/workerAuth";
 import { retrieveChunks, DEFAULT_RETRIEVAL_LIMIT } from "@/lib/retrieveChunks";
 import { buildVoiceContext } from "@/lib/contextBlock";
 import { assertTenantLicensed, TenantNotFoundError, TenantExpiredError } from "@/lib/tenants";
@@ -38,29 +38,9 @@ const RATE_LIMIT_WINDOW_MS = 60_000;
 const RATE_LIMIT_MAX = 120; // generous: one live call can ask several questions a minute
 const MAX_QUESTION_LENGTH = 1000;
 
-/** Constant-time compare so a wrong token can't be recovered by timing the
- * response, and length-safe because timingSafeEqual throws on a mismatch. */
-function tokenMatches(provided: string, expected: string): boolean {
-  const a = Buffer.from(provided);
-  const b = Buffer.from(expected);
-  if (a.length !== b.length) return false;
-  return timingSafeEqual(a, b);
-}
-
 export async function POST(req: NextRequest) {
-  const expected = process.env.VOICE_WORKER_TOKEN;
-  if (!expected) {
-    // Fail closed. Without this configured the endpoint would otherwise be
-    // open to anyone, which would expose every tenant's KB content.
-    console.error("VOICE_WORKER_TOKEN is not configured; refusing voice retrieval");
-    return NextResponse.json({ error: "Not configured" }, { status: 503 });
-  }
-
-  const auth = req.headers.get("authorization") || "";
-  const provided = auth.startsWith("Bearer ") ? auth.slice(7) : "";
-  if (!provided || !tokenMatches(provided, expected)) {
-    return NextResponse.json({ error: "Unauthorized" }, { status: 401 });
-  }
+  const auth = checkWorkerToken(req);
+  if (!auth.ok) return NextResponse.json({ error: auth.error }, { status: auth.status });
 
   let body: { tenantId?: string; question?: string; limit?: number };
   try {
